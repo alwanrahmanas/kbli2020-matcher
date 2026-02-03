@@ -1,560 +1,265 @@
 """
-
 FastAPI Backend for KBLI Code Lookup
-
 Pattern matching + AI-Enhanced Search
-
 Endpoints: /lookup, /lookup/batch, /search, /search/smart
-
 """
 
 import json
-
 import re
-
 import os
-
 from pathlib import Path
-
 from typing import Optional
-
 from io import BytesIO
 
-
-
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-
 from fastapi.middleware.cors import CORSMiddleware
-
 from fastapi.responses import StreamingResponse, FileResponse
-
 from pydantic import BaseModel
-
 import openpyxl
-
 from openpyxl.styles import Font, PatternFill, Alignment
-
 from dotenv import load_dotenv
-
 from openai import OpenAI
 
-
-
 # Load environment variables
-
 load_dotenv()
 
-
-
 # Initialize OpenAI client
-
 openai_client = None
-
 try:
-
     api_key = os.getenv("OPENAI_API_KEY")
-
     if api_key:
-
         openai_client = OpenAI(api_key=api_key)
-
         print("✅ OpenAI client initialized for smart search")
-
     else:
-
         print("⚠️ No OPENAI_API_KEY found - smart search disabled")
-
 except Exception as e:
-
     print(f"⚠️ OpenAI initialization failed: {e}")
 
-
-
 app = FastAPI(
-
     title="KBLI 2020 Code Lookup",
-
     description="Pattern-matching + AI-Enhanced Semantic Search for KBLI codes",
-
     version="2.1.0"
-
 )
-
-
 
 # CORS for frontend
-
 app.add_middleware(
-
     CORSMiddleware,
-
     allow_origins=["*"],
-
     allow_credentials=True,
-
     allow_methods=["*"],
-
     allow_headers=["*"],
-
 )
 
-
-
 # Global lookup dictionary: kode -> info
-
 kbli_lookup: dict[str, dict] = {}
 
-
-
-
-
 @app.on_event("startup")
-
 async def startup():
-
     """Load KBLI data into memory as dictionary for O(1) lookup"""
-
     global kbli_lookup
-
     
-
     json_path = Path(__file__).parent.parent / "kbli_parsed_fast.json"
-
     if not json_path.exists():
-
         print("ERROR: kbli_parsed_fast.json not found!")
-
         return
-
     
-
     with open(json_path, 'r', encoding='utf-8') as f:
-
         kbli_data = json.load(f)
-
     
-
     # Build lookup dictionary - normalize keys
-
     for entry in kbli_data:
-
         code = entry.get("kode_kbli", "").strip()
-
         if code:
-
             # Store both original and zero-padded versions
-
             kbli_lookup[code] = {
-
                 "kode": code,
-
                 "judul": entry.get("judul", ""),
-
                 "hierarki": entry.get("hierarki", ""),
-
                 "cakupan": entry.get("cakupan", "")[:500],  # Truncate cakupan
-
                 "metadata": entry.get("metadata", {})
-
             }
-
             # Also store padded version for 5-digit lookup
-
             if len(code) < 5 and code.isdigit():
-
                 padded = code.zfill(5)
-
                 kbli_lookup[padded] = kbli_lookup[code]
-
     
-
     print(f"✅ Loaded {len(kbli_lookup)} KBLI entries into lookup dictionary")
 
-
-
-
-
 def extract_kbli_codes(text: str) -> list[str]:
-
     """Extract potential KBLI codes from text using regex"""
-
     if not text:
-
         return []
-
     
-
     text = str(text).strip()
-
     
-
     # Pattern: 5-digit numbers (standard KBLI)
-
     pattern_5digit = r'\b(\d{5})\b'
-
     codes = re.findall(pattern_5digit, text)
-
     
-
     # Also try 2-4 digit if nothing found (might be category/golongan)
-
     if not codes:
-
         pattern_short = r'\b(\d{2,4})\b'
-
         codes = re.findall(pattern_short, text)
-
     
-
     return list(dict.fromkeys(codes))  # Remove duplicates, preserve order
 
-
-
-
-
 def lookup_code(code: str) -> dict:
-
     """Lookup a single KBLI code"""
-
     code = str(code).strip()
-
     
-
     # Try exact match first
-
     if code in kbli_lookup:
-
         return {**kbli_lookup[code], "status": "found"}
-
     
-
     # Try zero-padded version
-
     if code.isdigit():
-
         padded = code.zfill(5)
-
         if padded in kbli_lookup:
-
             return {**kbli_lookup[padded], "status": "found"}
-
     
-
     # Not found
-
     return {
-
         "kode": code,
-
         "judul": "",
-
         "hierarki": "",
-
         "cakupan": "",
-
         "metadata": {},
-
         "status": "not_found"
-
     }
-
-
-
-
 
 class LookupRequest(BaseModel):
-
     code: str
-
-
-
-
 
 class LookupResponse(BaseModel):
-
     code: str
-
     found: bool
-
     judul: str
-
     hierarki: str
-
     cakupan: str
 
-
-
-
-
 @app.get("/")
-
 async def root():
-
     return {
-
         "status": "ok",
-
         "service": "KBLI 2020 Code Lookup v2.0",
-
         "total_entries": len(kbli_lookup)
-
     }
-
-
-
-
 
 @app.get("/health")
-
 async def health():
-
     return {
-
         "status": "healthy",
-
         "entries_loaded": len(kbli_lookup),
-
         "method": "pattern_matching"
-
     }
-
-
-
-
 
 @app.get("/stats")
-
 async def stats():
-
     """Get statistics about loaded KBLI data"""
-
     return {
-
         "total_entries": len(kbli_lookup),
-
         "sample_codes": list(kbli_lookup.keys())[:10]
-
     }
-
-
-
-
 
 @app.get("/search")
-
-async def search_kbli(
-
-    q: str,
-
-    limit: int = 10
-
-):
-
+async def search_kbli(q: str, limit: int = 10):
     """
-
     Search KBLI by keyword in title, hierarchy, or description.
-
     Supports fuzzy matching.
-
     """
-
     if not q or len(q) < 2:
-
         return {"results": [], "query": q, "total": 0}
-
     
-
     q_lower = q.lower()
-
     results = []
-
     
-
     for code, info in kbli_lookup.items():
-
         # Search in title, hierarchy, and cakupan
-
         searchable = f"{info['judul']} {info['hierarki']} {info.get('cakupan', '')}".lower()
-
         
-
         # Simple relevance scoring
-
         score = 0
-
         if q_lower in searchable:
-
             # Exact substring match
-
             score = 100
-
             # Bonus if in title
-
             if q_lower in info['judul'].lower():
-
                 score += 50
-
             # Bonus if at start
-
             if searchable.startswith(q_lower):
-
                 score += 25
-
         else:
-
             # Fuzzy match - check if all query words are present
-
             query_words = q_lower.split()
-
             matches = sum(1 for word in query_words if word in searchable)
-
             if matches > 0:
-
                 score = (matches / len(query_words)) * 50
-
         
-
         if score > 0:
-
             results.append({
-
                 "code": code,
-
                 "judul": info["judul"],
-
                 "hierarki": info["hierarki"],
-
                 "score": score
-
             })
-
     
-
     # Sort by score descending
-
     results.sort(key=lambda x: x["score"], reverse=True)
-
     
-
     return {
-
         "results": results[:limit],
-
         "query": q,
-
         "total": len(results)
-
     }
 
-
-
-
-
 @app.get("/autocomplete")
-
-async def autocomplete(
-
-    q: str,
-
-    limit: int = 5
-
-):
-
+async def autocomplete(q: str, limit: int = 5):
     """
-
     Autocomplete suggestions for KBLI codes and titles.
-
     Returns quick suggestions as user types.
-
     """
-
     if not q or len(q) < 1:
-
         return {"suggestions": []}
-
     
-
     q_lower = q.lower()
-
     suggestions = []
-
     
-
     for code, info in kbli_lookup.items():
-
         # Match by code prefix
-
         if code.startswith(q):
-
             suggestions.append({
-
                 "type": "code",
-
                 "code": code,
-
                 "judul": info["judul"],
-
                 "match": f"{code} - {info['judul'][:60]}..."
-
             })
-
         # Match by title prefix
-
         elif info['judul'].lower().startswith(q_lower):
-
             suggestions.append({
-
                 "type": "title",
-
                 "code": code,
-
                 "judul": info["judul"],
-
                 "match": f"{info['judul'][:60]}... ({code})"
-
             })
-
         # Match by word in title
-
         elif any(word.startswith(q_lower) for word in info['judul'].lower().split()):
-
             suggestions.append({
-
                 "type": "word",
-
                 "code": code,
-
                 "judul": info["judul"],
-
                 "match": f"{info['judul'][:60]}... ({code})"
-
             })
-
         
-
         if len(suggestions) >= limit * 3:  # Get more for sorting
-
             break
-
     
-
     # Prioritize: code matches > title prefix > word matches
-
     suggestions.sort(key=lambda x: (
-
         0 if x["type"] == "code" else 1 if x["type"] == "title" else 2,
-
         x["code"]
-
     ))
-
     
-
     return {"suggestions": suggestions[:limit]}
-
-
-
-
 
 async def expand_query_with_ai(query: str) -> dict:
     """
@@ -600,7 +305,7 @@ Output: eceran, berbagai macam barang, kelontong
 
     try:
         response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4.1-nano-2025-04-14",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Input: \"{query}\""}
@@ -626,504 +331,239 @@ Output: eceran, berbagai macam barang, kelontong
         print(f"OpenAI error: {e}")
         return {"expanded": query, "keywords": [query], "ai_used": False, "error": str(e)}
 
-
-
-
-
-
-
 def search_with_keywords(keywords: list[str], limit: int = 10) -> list[dict]:
-
     """Search KBLI using multiple keywords with advanced scoring"""
-
     results = []
-
     
-
     for code, info in kbli_lookup.items():
-
         judul_lower = info['judul'].lower()
-
         hierarki_lower = info['hierarki'].lower()
-
         cakupan_lower = info.get('cakupan', '').lower()
-
         
-
         score = 0
-
         matched_keywords = []
-
         
-
         # Check each keyword
-
         for keyword in keywords:
-
             kw = keyword.lower().strip()
-
             if not kw:
-
                 continue
-
             
-
             keyword_found = False
-
             
-
             # 1. Exact match in title (highest priority)
-
             if kw in judul_lower:
-
                 # Check if it's a word boundary match (not substring)
-
                 words_in_title = judul_lower.split()
-
                 if kw in words_in_title or any(kw in word for word in words_in_title):
-
                     score += 1000  # Very high score for title match
-
                     keyword_found = True
-
                     matched_keywords.append(keyword)
-
             
-
             # 2. Match in hierarchy (medium priority)
-
             elif kw in hierarki_lower:
-
                 score += 300
-
                 keyword_found = True
-
                 matched_keywords.append(keyword)
-
             
-
             # 3. Match in cakupan (lower priority)
-
             elif kw in cakupan_lower:
-
                 score += 50  # Much lower score for cakupan
-
                 keyword_found = True
-
                 matched_keywords.append(keyword)
-
         
-
         # Bonus: Multiple keyword matches (AND logic)
-
         if len(matched_keywords) > 1:
-
             score += len(matched_keywords) * 200
-
         
-
         # Bonus: Exact phrase match in title
-
         full_query = " ".join(keywords).lower()
-
         if full_query in judul_lower:
-
             score += 2000  # Huge bonus for exact phrase
-
         
-
         if score > 0:
-
             results.append({
-
                 "code": code,
-
                 "judul": info["judul"],
-
                 "hierarki": info["hierarki"],
-
                 "cakupan": info.get("cakupan", "")[:200],
-
                 "score": score,
-
                 "matched_keywords": list(set(matched_keywords))  # Remove duplicates
-
             })
-
     
-
     # Sort by score descending
-
     results.sort(key=lambda x: x["score"], reverse=True)
-
     return results[:limit]
 
-
-
-
-
-
-
 @app.get("/search/smart")
-
-async def smart_search(
-
-    q: str,
-
-    limit: int = 10
-
-):
-
+async def smart_search(q: str, limit: int = 10):
     """
-
     AI-Enhanced Smart Search.
-
     Uses GPT to translate informal queries into KBLI terminology.
-
     Falls back to pattern matching if AI unavailable.
-
     
-
     Example:
-
     - "tukang ojek" -> finds 49422 Angkutan Ojek
-
     - "warung makan" -> finds 56101 Restoran
-
     """
-
     if not q or len(q) < 2:
-
         return {"results": [], "query": q, "total": 0}
-
     
-
     # Step 1: Expand query with AI
-
     expansion = await expand_query_with_ai(q)
-
     
-
     # Step 2: Search with expanded keywords
-
     results = search_with_keywords(expansion["keywords"], limit)
-
     
-
     return {
-
         "query": q,
-
         "expansion": expansion,
-
         "total": len(results),
-
         "results": results
-
     }
-
-
-
-
 
 @app.get("/autocomplete/smart")
-
-async def smart_autocomplete(
-
-    q: str,
-
-    limit: int = 5
-
-):
-
+async def smart_autocomplete(q: str, limit: int = 5):
     """
-
     AI-Enhanced Autocomplete.
-
     Uses semantic understanding to provide better suggestions.
-
     """
-
     if not q or len(q) < 2:
-
         return {"suggestions": []}
-
     
-
     # Get AI expansion
-
     expansion = await expand_query_with_ai(q)
-
     
-
     # Search with expanded query
-
     results = search_with_keywords(expansion["keywords"], limit)
-
     
-
     suggestions = []
-
     for r in results:
-
         suggestions.append({
-
             "type": "smart",
-
             "code": r["code"],
-
             "judul": r["judul"],
-
             "match": f"{r['code']} - {r['judul'][:50]}...",
-
             "score": r["score"]
-
         })
-
     
-
     return {
-
         "query": q,
-
         "expansion": expansion.get("expanded", q),
-
         "suggestions": suggestions
-
     }
-
-
-
-
 
 @app.post("/lookup")
-
 async def lookup_single(request: LookupRequest):
-
     """Lookup a single KBLI code"""
-
     result = lookup_code(request.code)
-
     return {
-
         "code": result["kode"],
-
         "found": result["status"] == "found",
-
         "judul": result["judul"],
-
         "hierarki": result["hierarki"],
-
         "cakupan": result["cakupan"]
-
     }
-
-
-
-
 
 @app.get("/lookup/{code}")
-
 async def lookup_code_get(code: str):
-
     """Lookup a single KBLI code via GET"""
-
     result = lookup_code(code)
-
     return {
-
         "code": result["kode"],
-
         "found": result["status"] == "found",
-
         "judul": result["judul"],
-
         "hierarki": result["hierarki"],
-
         "cakupan": result["cakupan"]
-
     }
-
-
-
-
 
 @app.post("/upload-preview")
-
 async def upload_preview(file: UploadFile = File(...)):
-
     """
-
     Upload Excel file and return column headers + preview.
-
     Does NOT process yet.
-
     """
-
     if not file.filename.endswith(('.xlsx', '.xls')):
-
         raise HTTPException(status_code=400, detail="Only Excel files supported (.xlsx, .xls)")
-
     
-
     content = await file.read()
-
     wb = openpyxl.load_workbook(BytesIO(content), read_only=True)
-
     sheet = wb.active
-
     
-
     # Get headers (first row)
-
     headers = []
-
     for cell in next(sheet.iter_rows(min_row=1, max_row=1)):
-
         headers.append(cell.value or f"Column_{len(headers)+1}")
-
     
-
     # Get sample data (first 5 rows)
-
     sample_rows = []
-
     for i, row in enumerate(sheet.iter_rows(min_row=2, max_row=6, values_only=True)):
-
         sample_rows.append(list(row))
-
     
-
     # Count total rows
-
     total_rows = 0
-
     for _ in sheet.iter_rows(min_row=2, values_only=True):
-
         total_rows += 1
-
     
-
     wb.close()
-
     
-
     return {
-
         "filename": file.filename,
-
         "headers": headers,
-
         "sample_data": sample_rows,
-
         "total_rows": total_rows
-
     }
 
-
-
-
-
 @app.post("/lookup/batch")
-
 async def lookup_batch(
-
     file: UploadFile = File(...),
-
     column_name: str = Form(...)
-
 ):
-
     """
-
     Process entire Excel file and return new Excel with lookup results.
-
     Pattern matching - fast and scalable.
-
     Returns Excel file directly.
-
     """
-
     if not file.filename.endswith(('.xlsx', '.xls')):
-
         raise HTTPException(status_code=400, detail="Only Excel files supported")
-
     
-
     content = await file.read()
-
     wb = openpyxl.load_workbook(BytesIO(content))
-
     sheet = wb.active
-
     
-
     # Find column index
-
     headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
-
     try:
-
         col_idx = headers.index(column_name) + 1  # 1-indexed for openpyxl
-
     except ValueError:
-
         raise HTTPException(
-
             status_code=400,
-
             detail=f"Column '{column_name}' not found. Available: {headers}"
-
         )
-
     
-
     # Add result columns
-
     result_col_judul = len(headers) + 1
-
     result_col_hierarki = len(headers) + 2
-
     result_col_status = len(headers) + 3
-
     
-
     # Set headers for new columns
-
     sheet.cell(row=1, column=result_col_judul, value="KBLI_Judul")
-
     sheet.cell(row=1, column=result_col_hierarki, value="KBLI_Hierarki")
-
     sheet.cell(row=1, column=result_col_status, value="Lookup_Status")
-
     
-
     # Style headers
-
     header_fill = PatternFill(start_color="4F46E5", end_color="4F46E5", fill_type="solid")
-
     header_font = Font(color="FFFFFF", bold=True)
-
     for col in [result_col_judul, result_col_hierarki, result_col_status]:
-
         cell = sheet.cell(row=1, column=col)
-
         cell.fill = header_fill
-
         cell.font = header_font
-
     
-
     # Process each row
-
     found_count = 0
-
     not_found_count = 0
-
     total_rows = 0
-
     
-
     for row_idx, row in enumerate(sheet.iter_rows(min_row=2, max_row=sheet.max_row), start=2):
         total_rows += 1
         cell_value = row[col_idx - 1].value
@@ -1174,162 +614,82 @@ async def lookup_batch(
         else:
             sheet.cell(row=row_idx, column=result_col_status, value="Empty cell")
             sheet.cell(row=row_idx, column=result_col_status).font = Font(color="94A3B8")
-
-
     
-
     # Auto-adjust column widths
-
     for col in [result_col_judul, result_col_hierarki, result_col_status]:
-
         sheet.column_dimensions[openpyxl.utils.get_column_letter(col)].width = 40
-
     
-
     # Save to BytesIO
-
     output = BytesIO()
-
     wb.save(output)
-
     output.seek(0)
-
     wb.close()
-
     
-
     # Generate filename
-
     original_name = Path(file.filename).stem
-
     result_filename = f"{original_name}_KBLI_result.xlsx"
-
     
-
     return StreamingResponse(
-
         output,
-
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-
         headers={
-
             "Content-Disposition": f"attachment; filename={result_filename}",
-
             "X-Total-Rows": str(total_rows),
-
             "X-Found-Count": str(found_count),
-
             "X-Not-Found-Count": str(not_found_count)
-
         }
-
     )
 
-
-
-
-
 @app.post("/lookup/batch-stream")
-
 async def lookup_batch_stream(
-
     file: UploadFile = File(...),
-
     column_name: str = Form(...)
-
 ):
-
     """
-
     Process Excel with SSE streaming for progress updates.
-
     Returns progress events, then final Excel download link.
-
     """
-
     if not file.filename.endswith(('.xlsx', '.xls')):
-
         raise HTTPException(status_code=400, detail="Only Excel files supported")
-
     
-
     content = await file.read()
-
     
-
     async def generate():
-
         wb = openpyxl.load_workbook(BytesIO(content))
-
         sheet = wb.active
-
         
-
         # Find column index
-
         headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
-
         try:
-
             col_idx = headers.index(column_name) + 1
-
         except ValueError:
-
             yield f"data: {json.dumps({'type': 'error', 'message': f'Column not found: {column_name}'})}\n\n"
-
             return
-
         
-
         # Count total rows first
-
         total_rows = sheet.max_row - 1
-
         yield f"data: {json.dumps({'type': 'start', 'total': total_rows})}\n\n"
-
         
-
         # Add result columns
-
         result_col_judul = len(headers) + 1
-
         result_col_hierarki = len(headers) + 2
-
         result_col_status = len(headers) + 3
-
         
-
         sheet.cell(row=1, column=result_col_judul, value="KBLI_Judul")
-
         sheet.cell(row=1, column=result_col_hierarki, value="KBLI_Hierarki")
-
         sheet.cell(row=1, column=result_col_status, value="Lookup_Status")
-
         
-
         found_count = 0
-
         not_found_count = 0
-
         
-
         for row_idx, row in enumerate(sheet.iter_rows(min_row=2, max_row=sheet.max_row), start=2):
-
             cell_value = row[col_idx - 1].value
-
             current = row_idx - 1
-
             
-
             result_info = {"code": "", "judul": "", "status": "empty"}
-
             
-
             if cell_value:
-
                 codes = extract_kbli_codes(str(cell_value))
-
                 if codes:
                     # Lookup ALL codes
                     juduls = []
@@ -1360,47 +720,24 @@ async def lookup_batch_stream(
                         sheet.cell(row=row_idx, column=result_col_status, value="Not Found")
                         not_found_count += 1
                         result_info = {"code": f"{len(codes)} codes", "judul": "", "status": "not_found"}
-
             
-
             # Send progress every 10 rows or at the end
-
             if current % 10 == 0 or current == total_rows:
-
                 yield f"data: {json.dumps({'type': 'progress', 'current': current, 'total': total_rows, 'found': found_count, 'not_found': not_found_count, 'latest': result_info})}\n\n"
-
         
-
         # Save to temp file
-
         output = BytesIO()
-
         wb.save(output)
-
         output.seek(0)
-
         wb.close()
-
         
-
         # Encode as base64 for transfer
-
         import base64
-
         excel_b64 = base64.b64encode(output.read()).decode()
-
         
-
         yield f"data: {json.dumps({'type': 'complete', 'total': total_rows, 'found': found_count, 'not_found': not_found_count, 'file_base64': excel_b64})}\n\n"
-
     
-
     return StreamingResponse(
-
         generate(),
-
         media_type="text/event-stream"
-
     )
-
-
