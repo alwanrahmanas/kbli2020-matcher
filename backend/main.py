@@ -1125,68 +1125,56 @@ async def lookup_batch(
     
 
     for row_idx, row in enumerate(sheet.iter_rows(min_row=2, max_row=sheet.max_row), start=2):
-
         total_rows += 1
-
         cell_value = row[col_idx - 1].value
-
         
-
         if cell_value:
-
             # Extract KBLI codes from cell
-
             codes = extract_kbli_codes(str(cell_value))
-
             
-
             if codes:
-
-                # Lookup first found code
-
-                result = lookup_code(codes[0])
-
+                # Lookup ALL codes
+                juduls = []
+                hierarkis = []
+                found_any = False
                 
-
-                sheet.cell(row=row_idx, column=result_col_judul, value=result["judul"])
-
-                sheet.cell(row=row_idx, column=result_col_hierarki, value=result["hierarki"])
-
+                for code in codes:
+                    result = lookup_code(code)
+                    if result["status"] == "found":
+                        juduls.append(f"[{code}] {result['judul']}")
+                        hierarkis.append(f"[{code}] {result['hierarki']}")
+                        found_any = True
+                    else:
+                        juduls.append(f"[{code}] Not Found")
+                        hierarkis.append(f"[{code}] -")
                 
-
-                if result["status"] == "found":
-
-                    sheet.cell(row=row_idx, column=result_col_status, value="✓ Found")
-
+                # Join with newlines
+                sheet.cell(row=row_idx, column=result_col_judul, value="\n".join(juduls))
+                sheet.cell(row=row_idx, column=result_col_hierarki, value="\n".join(hierarkis))
+                
+                # Enable wrap text for multiline
+                sheet.cell(row=row_idx, column=result_col_judul).alignment = Alignment(wrap_text=True)
+                sheet.cell(row=row_idx, column=result_col_hierarki).alignment = Alignment(wrap_text=True)
+                
+                if found_any:
+                    status_text = f"Found ({len(juduls)})"
+                    sheet.cell(row=row_idx, column=result_col_status, value=status_text)
                     sheet.cell(row=row_idx, column=result_col_status).font = Font(color="22C55E")
-
                     found_count += 1
-
                 else:
-
                     sheet.cell(row=row_idx, column=result_col_status, value="✗ Not Found")
-
                     sheet.cell(row=row_idx, column=result_col_status).font = Font(color="EF4444")
-
                     not_found_count += 1
-
             else:
-
                 sheet.cell(row=row_idx, column=result_col_judul, value="")
-
                 sheet.cell(row=row_idx, column=result_col_hierarki, value="")
-
                 sheet.cell(row=row_idx, column=result_col_status, value="No code detected")
-
                 sheet.cell(row=row_idx, column=result_col_status).font = Font(color="F59E0B")
-
                 not_found_count += 1
-
         else:
-
             sheet.cell(row=row_idx, column=result_col_status, value="Empty cell")
-
             sheet.cell(row=row_idx, column=result_col_status).font = Font(color="94A3B8")
+
 
     
 
