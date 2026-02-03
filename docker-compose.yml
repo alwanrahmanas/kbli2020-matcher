@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  # Backend API
+  kbli-backend:
+    build: .
+    container_name: kbli2020-backend
+    ports:
+      - "8000:8000" # Backend API
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+    env_file:
+      - backend/.env
+    volumes:
+      # Mount for development (optional - comment out for production)
+      - ./backend:/app/backend
+      - ./kbli_parsed_fast.json:/app/kbli_parsed_fast.json
+    restart: unless-stopped
+    networks:
+      - kbli-network
+
+  # Frontend (Nginx to serve static files)
+  kbli-frontend:
+    image: nginx:alpine
+    container_name: kbli2020-frontend
+    ports:
+      - "3000:80" # Frontend on port 3000
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - kbli-backend
+    restart: unless-stopped
+    networks:
+      - kbli-network
+
+networks:
+  kbli-network:
+    driver: bridge

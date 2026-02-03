@@ -693,7 +693,26 @@
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:8000';
+        // Auto-detect API base URL based on current host
+        // If accessing via network IP (e.g., 192.168.1.29:3000), use that IP
+        // Otherwise use localhost
+        const getApiBase = () => {
+            const hostname = window.location.hostname;
+            const port = window.location.port;
+
+            // If accessed via IP address or hostname (not localhost), use the same host
+            if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+                // Use same host but with backend port (mapped to 3000 in docker-compose)
+                return `http://${hostname}:${port || 3000}`;
+            }
+
+            // Default to localhost for local development
+            return 'http://localhost:8000';
+        };
+
+        const API_BASE = getApiBase();
+        console.log('🔗 API Base URL:', API_BASE);
+
         let resultExcelBlob = null;
         let resultFileName = '';
         let searchTimeout = null;
