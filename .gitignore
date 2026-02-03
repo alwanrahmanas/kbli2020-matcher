@@ -1,0 +1,30 @@
+# Environment Variables (SENSITIVE - DO NOT REMOVE)
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.log
+
+# Generated Data / Outputs
+*_result.xlsx
+*_KBLI_result.xlsx
+temp/
+output/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Old/Unused files (Optional, uncment if you want to ignore old index)
+# frontend/index.html

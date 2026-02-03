@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KBLI 2020 Code Lookup</title>
+    <meta name="description" content="Cari klasifikasi kode KBLI 2020 dengan cepat - Pattern Matching, No AI">
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap"
+        rel="stylesheet">
+
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-card: #1a1a28;
+            --accent-primary: #6366f1;
+            --accent-secondary: #8b5cf6;
+            --accent-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%);
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --border: rgba(255, 255, 255, 0.08);
+            --glass: rgba(255, 255, 255, 0.03);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        /* Animated background */
+        .bg-pattern {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background:
+                radial-gradient(circle at 15% 85%, rgba(99, 102, 241, 0.12) 0%, transparent 45%),
+                radial-gradient(circle at 85% 15%, rgba(139, 92, 246, 0.12) 0%, transparent 45%),
+                radial-gradient(circle at 50% 50%, rgba(168, 85, 247, 0.08) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Header */
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+            padding: 2rem 0;
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .logo-icon {
+            width: 56px;
+            height: 56px;
+            background: var(--accent-gradient);
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.75rem;
+            box-shadow: 0 8px 40px rgba(99, 102, 241, 0.35);
+        }
+
+        h1 {
+            font-size: 2.75rem;
+            font-weight: 700;
+            background: var(--accent-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.15rem;
+            margin-top: 0.5rem;
+        }
+
+        .badge-row {
+            display: flex;
+            justify-content: center;
+            gap: 0.75rem;
+            margin-top: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            background: var(--glass);
+            border: 1px solid var(--border);
+            padding: 0.5rem 1rem;
+            border-radius: 50px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .badge-icon {
+            font-size: 1rem;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 2rem;
+            margin-bottom: 1.5rem;
+            backdrop-filter: blur(10px);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1.25rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .card-header h2 {
+            font-size: 1.35rem;
+            font-weight: 600;
+        }
+
+        .card-icon {
+            width: 44px;
+            height: 44px;
+            background: var(--accent-gradient);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.4rem;
+            box-shadow: 0 4px 16px rgba(99, 102, 241, 0.3);
+        }
+
+        /* Input Section */
+        .input-group {
+            margin-bottom: 1.25rem;
+            position: relative;
+        }
+
+        .input-group label {
+            display: block;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+        }
+
+        input[type="text"],
+        select {
+            width: 100%;
+            padding: 1rem 1.25rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 1rem;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        input[type="text"].with-autocomplete {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        select {
+            font-family: 'Inter', sans-serif;
+        }
+
+        input:focus,
+        select:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.2);
+        }
+
+        input::placeholder {
+            color: var(--text-muted);
+        }
+
+        /* Autocomplete Dropdown */
+        .autocomplete-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            margin-top: 0.5rem;
+            max-height: 300px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+
+        .autocomplete-dropdown.active {
+            display: block;
+            animation: fadeIn 0.2s ease;
+        }
+
+        .autocomplete-item {
+            padding: 1rem 1.25rem;
+            cursor: pointer;
+            border-bottom: 1px solid var(--border);
+            transition: background 0.2s;
+        }
+
+        .autocomplete-item:last-child {
+            border-bottom: none;
+        }
+
+        .autocomplete-item:hover {
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .autocomplete-item-code {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent-primary);
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .autocomplete-item-title {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            margin-top: 0.25rem;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 1rem 1.75rem;
+            border: none;
+            border-radius: 12px;
+            font-family: inherit;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--accent-gradient);
+            color: white;
+            box-shadow: 0 6px 24px rgba(99, 102, 241, 0.35);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 36px rgba(99, 102, 241, 0.45);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            color: white;
+            box-shadow: 0 6px 24px rgba(34, 197, 94, 0.35);
+        }
+
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 36px rgba(34, 197, 94, 0.45);
+        }
+
+        /* Results */
+        .result-display {
+            display: none;
+            margin-top: 1.5rem;
+        }
+
+        .result-display.active {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .result-card {
+            background: var(--bg-secondary);
+            border-radius: 16px;
+            padding: 1.5rem;
+            border-left: 4px solid var(--accent-primary);
+            margin-bottom: 1rem;
+        }
+
+        .result-card.found {
+            border-left-color: var(--success);
+        }
+
+        .result-card.not-found {
+            border-left-color: var(--danger);
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .result-code {
+            font-size: 2rem;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent-primary);
+        }
+
+        .status-badge {
+            padding: 0.5rem 1rem;
+            border-radius: 50px;
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+
+        .status-found {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--success);
+        }
+
+        .status-not-found {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--danger);
+        }
+
+        .result-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+        }
+
+        .result-hierarki {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-bottom: 0.75rem;
+            padding: 0.75rem 1rem;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+        }
+
+        .result-cakupan {
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            font-style: italic;
+            line-height: 1.7;
+        }
+
+        .search-meta {
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+        }
+
+        /* Upload zone */
+        .upload-zone {
+            border: 2px dashed var(--border);
+            border-radius: 16px;
+            padding: 3rem 2rem;
+            text-align: center;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .upload-zone:hover,
+        .upload-zone.dragover {
+            border-color: var(--accent-primary);
+            background: rgba(99, 102, 241, 0.05);
+        }
+
+        .upload-zone input[type="file"] {
+            display: none;
+        }
+
+        .upload-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            opacity: 0.8;
+        }
+
+        .upload-hint {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            margin-top: 0.5rem;
+        }
+
+        /* Progress */
+        .progress-container {
+            display: none;
+            margin-top: 1.5rem;
+        }
+
+        .progress-container.active {
+            display: block;
+        }
+
+        .progress-bar-outer {
+            background: var(--bg-secondary);
+            border-radius: 50px;
+            height: 24px;
+            overflow: hidden;
+            margin-bottom: 1rem;
+        }
+
+        .progress-bar-inner {
+            height: 100%;
+            background: var(--accent-gradient);
+            border-radius: 50px;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: white;
+            min-width: 40px;
+        }
+
+        .progress-stats {
+            display: flex;
+            justify-content: space-between;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .stat-found {
+            color: var(--success);
+        }
+
+        .stat-not-found {
+            color: var(--danger);
+        }
+
+        /* Download section */
+        .download-section {
+            display: none;
+            margin-top: 1.5rem;
+            padding: 1.5rem;
+            background: rgba(34, 197, 94, 0.1);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            border-radius: 16px;
+            text-align: center;
+        }
+
+        .download-section.active {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .download-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--success);
+        }
+
+        .download-info {
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+
+        /* Grid layout */
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 2rem;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            .container {
+                padding: 1rem;
+            }
+
+            h1 {
+                font-size: 2rem;
+            }
+
+            .grid-2 {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="bg-pattern"></div>
+
+    <div class="container">
+        <header>
+            <div class="logo">
+                <div class="logo-icon">🔍</div>
+            </div>
+            <h1>KBLI 2020 Code Lookup</h1>
+            <p class="subtitle">Cari klasifikasi kode KBLI dengan cepat - AI Smart Search</p>
+
+            <div class="badge-row">
+                <span class="badge"><span class="badge-icon">🤖</span> AI Smart Search</span>
+                <span class="badge"><span class="badge-icon">⚡</span> Fast Pattern Matching</span>
+                <span class="badge"><span class="badge-icon">📊</span> Batch Excel Processing</span>
+                <span class="badge"><span class="badge-icon">📥</span> Download Results</span>
+            </div>
+        </header>
+
+        <div class="grid-2">
+            <!-- Search by Keyword -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">🤖</div>
+                    <h2>AI Smart Search</h2>
+                </div>
+                <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">Ketik bahasa informal, AI
+                    akan menerjemahkan ke istilah KBLI</p>
+
+                <div class="input-group">
+                    <label for="searchInput">Cari KBLI (bahasa bebas, misal: tukang ojek, warung makan)</label>
+                    <input type="text" id="searchInput" placeholder="Contoh: tukang ojek, bengkel motor, jual pulsa..."
+                        oninput="handleSearchAutocomplete(event)" onkeyup="handleSearchEnter(event)" autocomplete="off">
+                    <div class="autocomplete-dropdown" id="searchAutocomplete"></div>
+                    <div id="aiExpansion"
+                        style="display:none; margin-top: 0.75rem; padding: 0.75rem; background: rgba(99,102,241,0.1); border-radius: 8px; font-size: 0.85rem;">
+                        <span style="color: var(--accent-primary);">🤖 AI Expansion:</span> <span id="expansionText"
+                            style="color: var(--text-secondary);"></span>
+                    </div>
+                </div>
+
+                <button class="btn btn-primary" id="searchBtn" onclick="searchKBLI()">
+                    <span>🤖</span> Smart Search
+                </button>
+
+                <div class="result-display" id="searchResults">
+                    <!-- Search results will be inserted here -->
+                </div>
+            </div>
+
+            <!-- Lookup by Code -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">🔢</div>
+                    <h2>Lookup Berdasarkan Kode</h2>
+                </div>
+
+                <div class="input-group">
+                    <label for="codeInput">Masukkan Kode KBLI (5 digit)</label>
+                    <input type="text" id="codeInput" class="with-autocomplete" placeholder="Contoh: 46591, 95120..."
+                        maxlength="10" oninput="handleCodeAutocomplete(event)" onkeyup="handleCodeEnter(event)"
+                        autocomplete="off">
+                    <div class="autocomplete-dropdown" id="codeAutocomplete"></div>
+                </div>
+
+                <button class="btn btn-primary" id="lookupBtn" onclick="lookupSingle()">
+                    <span>🔍</span> Cari Klasifikasi
+                </button>
+
+                <div class="result-display" id="singleResult">
+                    <!-- Result will be inserted here -->
+                </div>
+            </div>
+        </div>
+
+        <div class="grid-2" style="margin-top: 2rem;">
+            <!-- Batch Upload -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">📁</div>
+                    <h2>Batch Lookup dari Excel</h2>
+                </div>
+
+                <div class="upload-zone" id="uploadZone" onclick="document.getElementById('excelFile').click()">
+                    <input type="file" id="excelFile" accept=".xlsx,.xls" onchange="handleFileSelect(event)">
+                    <div class="upload-icon">📊</div>
+                    <p>Klik atau drag file Excel (.xlsx) ke sini</p>
+                    <p class="upload-hint">File harus memiliki kolom berisi kode KBLI</p>
+                </div>
+
+                <div id="filePreview" style="display: none; margin-top: 1.5rem;">
+                    <div
+                        style="background: var(--bg-secondary); padding: 1rem; border-radius: 12px; margin-bottom: 1rem;">
+                        <p><strong>📄 File:</strong> <span id="fileName"></span></p>
+                        <p style="color: var(--text-secondary); margin-top: 0.5rem;"><span id="totalRows"></span> baris
+                            data</p>
+                    </div>
+
+                    <div class="input-group">
+                        <label for="columnSelect">Pilih Kolom yang Berisi Kode KBLI</label>
+                        <select id="columnSelect"></select>
+                    </div>
+
+                    <button class="btn btn-primary" onclick="processBatch()">
+                        <span>⚡</span> Proses Semua Data
+                    </button>
+                </div>
+
+                <div class="progress-container" id="progressContainer">
+                    <div class="progress-bar-outer">
+                        <div class="progress-bar-inner" id="progressBar" style="width: 0%;">0%</div>
+                    </div>
+                    <div class="progress-stats">
+                        <span class="stat-item">Memproses: <strong id="progressText">0/0</strong></span>
+                        <span class="stat-item stat-found">✓ <span id="foundCount">0</span></span>
+                        <span class="stat-item stat-not-found">✗ <span id="notFoundCount">0</span></span>
+                    </div>
+                </div>
+
+                <div class="download-section" id="downloadSection">
+                    <div class="download-title">✅ Proses Selesai!</div>
+                    <div class="download-info" id="downloadInfo">0 baris diproses</div>
+                    <button class="btn btn-success" id="downloadBtn" onclick="downloadResult()">
+                        <span>📥</span> Download Excel Hasil
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>KBLI 2020 Code Lookup v2.1 • AI Smart Search + Pattern Matching</p>
+            <p style="margin-top: 0.5rem;">Sumber: Klasifikasi Baku Lapangan Usaha Indonesia 2020 (BPS)</p>
+        </footer>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        let resultExcelBlob = null;
+        let resultFileName = '';
+        let searchTimeout = null;
+        let autocompleteTimeout = null;
+
+        // Search autocomplete
+        async function handleSearchAutocomplete(event) {
+            const query = event.target.value.trim();
+            const dropdown = document.getElementById('searchAutocomplete');
+
+            if (query.length < 2) {
+                dropdown.classList.remove('active');
+                return;
+            }
+
+            clearTimeout(autocompleteTimeout);
+            autocompleteTimeout = setTimeout(async () => {
+                try {
+                    // Use AI Smart Autocomplete
+                    const response = await fetch(`${API_BASE}/autocomplete/smart?q=${encodeURIComponent(query)}&limit=5`);
+                    const data = await response.json();
+
+                    if (data.suggestions && data.suggestions.length > 0) {
+                        dropdown.innerHTML = data.suggestions.map(s => `
+                            <div class="autocomplete-item" onclick="selectSearchSuggestion('${s.code}', '${s.judul.replace(/'/g, "\\'")}')">
+                                <div class="autocomplete-item-code">🤖 ${s.code}</div>
+                                <div class="autocomplete-item-title">${s.judul.substring(0, 80)}...</div>
+                            </div>
+                        `).join('');
+                        dropdown.classList.add('active');
+                    } else {
+                        dropdown.classList.remove('active');
+                    }
+                } catch (error) {
+                    console.error('Autocomplete error:', error);
+                }
+            }, 500);
+        }
+
+        function selectSearchSuggestion(code, judul) {
+            document.getElementById('searchInput').value = judul.substring(0, 50);
+            document.getElementById('searchAutocomplete').classList.remove('active');
+            lookupByCode(code);
+        }
+
+        function handleSearchEnter(event) {
+            if (event.key === 'Enter') {
+                searchKBLI();
+            }
+        }
+
+        async function searchKBLI() {
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query || query.length < 2) {
+                alert('Masukkan minimal 2 karakter untuk pencarian!');
+                return;
+            }
+
+            const btn = document.getElementById('searchBtn');
+            const resultsDiv = document.getElementById('searchResults');
+
+            btn.disabled = true;
+            btn.innerHTML = '<span>🤖</span> AI Processing...';
+
+            // Hide previous expansion
+            document.getElementById('aiExpansion').style.display = 'none';
+
+            try {
+                // Use AI Smart Search
+                const response = await fetch(`${API_BASE}/search/smart?q=${encodeURIComponent(query)}&limit=10`);
+                if (!response.ok) throw new Error('API Error');
+
+                const data = await response.json();
+
+                // Show AI expansion info
+                if (data.expansion && data.expansion.ai_used) {
+                    document.getElementById('expansionText').textContent = data.expansion.expanded;
+                    document.getElementById('aiExpansion').style.display = 'block';
+                }
+
+                renderSearchResults(data, resultsDiv);
+                resultsDiv.classList.add('active');
+
+            } catch (error) {
+                alert('Error: ' + error.message + '\n\nPastikan backend berjalan di localhost:8000');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<span>🤖</span> Smart Search';
+            }
+        }
+
+        function renderSearchResults(data, container) {
+            if (!data.results || data.results.length === 0) {
+                container.innerHTML = `
+                    <div class="search-meta">Tidak ada hasil untuk "${data.query}"</div>
+                `;
+                return;
+            }
+
+            let html = `<div class="search-meta">🔍 Ditemukan ${data.total} hasil untuk "${data.query}"</div>`;
+
+            data.results.forEach(result => {
+                html += `
+                    <div class="result-card found">
+                        <div class="result-header">
+                            <span class="result-code">${result.code}</span>
+                        </div>
+                        <div class="result-title">${result.judul}</div>
+                        <div class="result-hierarki">📍 ${result.hierarki}</div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
+
+        // Code autocomplete
+        async function handleCodeAutocomplete(event) {
+            const query = event.target.value.trim();
+            const dropdown = document.getElementById('codeAutocomplete');
+
+            if (query.length < 1) {
+                dropdown.classList.remove('active');
+                return;
+            }
+
+            clearTimeout(autocompleteTimeout);
+            autocompleteTimeout = setTimeout(async () => {
+                try {
+                    const response = await fetch(`${API_BASE}/autocomplete?q=${encodeURIComponent(query)}&limit=5`);
+                    const data = await response.json();
+
+                    if (data.suggestions && data.suggestions.length > 0) {
+                        dropdown.innerHTML = data.suggestions.map(s => `
+                            <div class="autocomplete-item" onclick="selectCodeSuggestion('${s.code}')">
+                                <div class="autocomplete-item-code">${s.code}</div>
+                                <div class="autocomplete-item-title">${s.judul.substring(0, 80)}...</div>
+                            </div>
+                        `).join('');
+                        dropdown.classList.add('active');
+                    } else {
+                        dropdown.classList.remove('active');
+                    }
+                } catch (error) {
+                    console.error('Autocomplete error:', error);
+                }
+            }, 300);
+        }
+
+        function selectCodeSuggestion(code) {
+            document.getElementById('codeInput').value = code;
+            document.getElementById('codeAutocomplete').classList.remove('active');
+            lookupSingle();
+        }
+
+        function handleCodeEnter(event) {
+            if (event.key === 'Enter') {
+                lookupSingle();
+            }
+        }
+
+        async function lookupSingle() {
+            const code = document.getElementById('codeInput').value.trim();
+            if (!code) {
+                alert('Masukkan kode KBLI!');
+                return;
+            }
+
+            await lookupByCode(code);
+        }
+
+        async function lookupByCode(code) {
+            const btn = document.getElementById('lookupBtn');
+            const resultDiv = document.getElementById('singleResult');
+
+            btn.disabled = true;
+            btn.innerHTML = '<span>⏳</span> Mencari...';
+
+            try {
+                const response = await fetch(`${API_BASE}/lookup/${encodeURIComponent(code)}`);
+                if (!response.ok) throw new Error('API Error');
+
+                const data = await response.json();
+                renderSingleResult(data, resultDiv);
+                resultDiv.classList.add('active');
+
+            } catch (error) {
+                alert('Error: ' + error.message + '\n\nPastikan backend berjalan di localhost:8000');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<span>🔍</span> Cari Klasifikasi';
+            }
+        }
+
+        function renderSingleResult(data, container) {
+            const statusClass = data.found ? 'found' : 'not-found';
+            const statusBadge = data.found ?
+                '<span class="status-badge status-found">✓ Ditemukan</span>' :
+                '<span class="status-badge status-not-found">✗ Tidak Ditemukan</span>';
+
+            let html = `
+                <div class="result-card ${statusClass}">
+                    <div class="result-header">
+                        <span class="result-code">${data.code}</span>
+                        ${statusBadge}
+                    </div>
+            `;
+
+            if (data.found) {
+                html += `
+                    <div class="result-title">${data.judul || 'N/A'}</div>
+                    ${data.hierarki ? `<div class="result-hierarki">📍 ${data.hierarki}</div>` : ''}
+                    ${data.cakupan ? `<div class="result-cakupan">${data.cakupan.substring(0, 300)}...</div>` : ''}
+                `;
+            } else {
+                html += `
+                    <div class="result-title" style="color: var(--text-muted);">Kode tidak ditemukan dalam database KBLI 2020</div>
+                    <div class="result-cakupan">Pastikan kode yang dimasukkan benar (5 digit).</div>
+                `;
+            }
+
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        // File upload handling
+        let uploadedFile = null;
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            uploadedFile = file;
+            document.getElementById('fileName').textContent = file.name;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch(`${API_BASE}/upload-preview`, {
+                method: 'POST',
+                body: formData
+            })
+                .then(r => r.json())
+                .then(data => {
+                    const select = document.getElementById('columnSelect');
+                    select.innerHTML = data.headers.map(h =>
+                        `<option value="${h}">${h}</option>`
+                    ).join('');
+
+                    document.getElementById('totalRows').textContent = data.total_rows;
+                    document.getElementById('filePreview').style.display = 'block';
+                    document.getElementById('downloadSection').classList.remove('active');
+                    document.getElementById('progressContainer').classList.remove('active');
+                })
+                .catch(err => {
+                    alert('Error uploading file: ' + err.message);
+                });
+        }
+
+        async function processBatch() {
+            if (!uploadedFile) return;
+
+            const column = document.getElementById('columnSelect').value;
+            const progressContainer = document.getElementById('progressContainer');
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            const foundCount = document.getElementById('foundCount');
+            const notFoundCount = document.getElementById('notFoundCount');
+            const downloadSection = document.getElementById('downloadSection');
+
+            progressContainer.classList.add('active');
+            downloadSection.classList.remove('active');
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+
+            const formData = new FormData();
+            formData.append('file', uploadedFile);
+            formData.append('column_name', column);
+
+            try {
+                const response = await fetch(`${API_BASE}/lookup/batch-stream`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const text = decoder.decode(value);
+                    const lines = text.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+
+                                if (data.type === 'progress') {
+                                    const percent = Math.round((data.current / data.total) * 100);
+                                    progressBar.style.width = `${percent}%`;
+                                    progressBar.textContent = `${percent}%`;
+                                    progressText.textContent = `${data.current}/${data.total}`;
+                                    foundCount.textContent = data.found;
+                                    notFoundCount.textContent = data.not_found;
+                                } else if (data.type === 'complete') {
+                                    progressBar.style.width = '100%';
+                                    progressBar.textContent = '100%';
+                                    progressText.textContent = `${data.total}/${data.total}`;
+                                    foundCount.textContent = data.found;
+                                    notFoundCount.textContent = data.not_found;
+
+                                    const binaryString = atob(data.file_base64);
+                                    const bytes = new Uint8Array(binaryString.length);
+                                    for (let i = 0; i < binaryString.length; i++) {
+                                        bytes[i] = binaryString.charCodeAt(i);
+                                    }
+                                    resultExcelBlob = new Blob([bytes], {
+                                        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                                    });
+
+                                    const originalName = uploadedFile.name.replace(/\.xlsx?$/i, '');
+                                    resultFileName = `${originalName}_KBLI_result.xlsx`;
+
+                                    document.getElementById('downloadInfo').textContent =
+                                        `${data.total} baris diproses • ${data.found} ditemukan • ${data.not_found} tidak ditemukan`;
+                                    downloadSection.classList.add('active');
+                                } else if (data.type === 'error') {
+                                    alert('Error: ' + data.message);
+                                }
+                            } catch (e) {
+                                console.error('Parse error:', e);
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                progressContainer.classList.remove('active');
+            }
+        }
+
+        function downloadResult() {
+            if (!resultExcelBlob) {
+                alert('File belum siap. Silakan proses ulang.');
+                return;
+            }
+
+            const url = URL.createObjectURL(resultExcelBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = resultFileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // Drag and drop
+        const uploadZone = document.getElementById('uploadZone');
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            uploadZone.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            uploadZone.addEventListener(eventName, () => uploadZone.classList.add('dragover'));
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            uploadZone.addEventListener(eventName, () => uploadZone.classList.remove('dragover'));
+        });
+
+        uploadZone.addEventListener('drop', (e) => {
+            const files = e.dataTransfer.files;
+            if (files.length) {
+                document.getElementById('excelFile').files = files;
+                handleFileSelect({ target: { files } });
+            }
+        });
+
+        // Close autocomplete when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.input-group')) {
+                document.querySelectorAll('.autocomplete-dropdown').forEach(d => {
+                    d.classList.remove('active');
+                });
+            }
+        });
+    </script>
+</body>
+
+</html>
