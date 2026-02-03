@@ -1331,30 +1331,35 @@ async def lookup_batch_stream(
                 codes = extract_kbli_codes(str(cell_value))
 
                 if codes:
-
-                    result = lookup_code(codes[0])
-
-                    sheet.cell(row=row_idx, column=result_col_judul, value=result["judul"])
-
-                    sheet.cell(row=row_idx, column=result_col_hierarki, value=result["hierarki"])
-
+                    # Lookup ALL codes
+                    juduls = []
+                    hierarkis = []
+                    found_any = False
                     
-
-                    if result["status"] == "found":
-
-                        sheet.cell(row=row_idx, column=result_col_status, value="Found")
-
+                    for code in codes:
+                        result = lookup_code(code)
+                        if result["status"] == "found":
+                            juduls.append(f"[{code}] {result['judul']}")
+                            hierarkis.append(f"[{code}] {result['hierarki']}")
+                            found_any = True
+                        else:
+                            juduls.append(f"[{code}] Not Found")
+                            hierarkis.append(f"[{code}] -")
+                    
+                    # Join with newlines
+                    sheet.cell(row=row_idx, column=result_col_judul, value="\n".join(juduls))
+                    sheet.cell(row=row_idx, column=result_col_hierarki, value="\n".join(hierarkis))
+                    sheet.cell(row=row_idx, column=result_col_judul).alignment = Alignment(wrap_text=True)
+                    sheet.cell(row=row_idx, column=result_col_hierarki).alignment = Alignment(wrap_text=True)
+                    
+                    if found_any:
+                        sheet.cell(row=row_idx, column=result_col_status, value=f"Found ({len(juduls)})")
                         found_count += 1
-
-                        result_info = {"code": codes[0], "judul": result["judul"], "status": "found"}
-
+                        result_info = {"code": f"{len(codes)} codes", "judul": f"Processed {len(codes)} items", "status": "found"}
                     else:
-
                         sheet.cell(row=row_idx, column=result_col_status, value="Not Found")
-
                         not_found_count += 1
-
-                        result_info = {"code": codes[0], "judul": "", "status": "not_found"}
+                        result_info = {"code": f"{len(codes)} codes", "judul": "", "status": "not_found"}
 
             
 
