@@ -743,45 +743,7 @@
         let searchTimeout = null;
         let autocompleteTimeout = null;
 
-        // Search autocomplete
-        async function handleSearchAutocomplete(event) {
-            const query = event.target.value.trim();
-            const dropdown = document.getElementById('searchAutocomplete');
 
-            if (query.length < 2) {
-                dropdown.classList.remove('active');
-                return;
-            }
-
-            clearTimeout(autocompleteTimeout);
-            autocompleteTimeout = setTimeout(async () => {
-                try {
-                    // Use AI Smart Autocomplete
-                    const response = await fetch(`${API_BASE}/autocomplete/smart?q=${encodeURIComponent(query)}&limit=5`);
-                    const data = await response.json();
-
-                    if (data.suggestions && data.suggestions.length > 0) {
-                        dropdown.innerHTML = data.suggestions.map(s => `
-                            <div class="autocomplete-item" onclick="selectSearchSuggestion('${s.code}', '${s.judul.replace(/'/g, "\\'")}')">
-                                <div class="autocomplete-item-code">🤖 ${s.code}</div>
-                                <div class="autocomplete-item-title">${s.judul.substring(0, 80)}...</div>
-                            </div>
-                        `).join('');
-                        dropdown.classList.add('active');
-                    } else {
-                        dropdown.classList.remove('active');
-                    }
-                } catch (error) {
-                    console.error('Autocomplete error:', error);
-                }
-            }, 500);
-        }
-
-        function selectSearchSuggestion(code, judul) {
-            document.getElementById('searchInput').value = judul.substring(0, 50);
-            document.getElementById('searchAutocomplete').classList.remove('active');
-            lookupByCode(code);
-        }
 
         function handleSearchEnter(event) {
             if (event.key === 'Enter') {
