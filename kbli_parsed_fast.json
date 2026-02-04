@@ -22542,5 +22542,140 @@
     "cakupan": "LAINNYA Kelompok ini mencakup kegiatan lembaga/badan/instansi dari perwakilan negara asing, badan internasional dan regional lainnya, badan keuangan dan moneter internasional, bank dunia, organisasi bea cukai dunia, organisasi untuk kerjasama dan pengembangan ekonomi, organisasi negara-negara pengekspor minyak, perhimpunan negara-negara Eropa, perhimpunanperdagangan bebas negara-negara Eropa dan lain- lain, seperti perwakilan PBB dan suborganisasi, UNICEF, UNESCO, UNDP, WHO, ILO, ASEAN, IMF, OECD dan OPEC dan lain-lain serta kedutaan besar, dan konsulat yang ditentukan oleh negara dimana berada daripada negara yang diwakilinya. https://www.bps.go.id https://www.bps.go.id BADAN PUSAT STATISTIK Jl. dr. Sutomo No. 6-8, Jakarta 10710 Telp: 021 3841195, 3842508, 3810291 Fax: 021 3857046 Homepage: http://www.bps.go.id Email: bpshq@bps.go.id",
     "source_page": 837,
     "content": "KODE: 99000\nJUDUL: AKTIVITAS BADAN INTERNASIONAL DAN BADAN EKSTRA INTERNASIONAL\nHIERARKI: U AKTIVITAS BADAN INTERNASIONAL DAN BADAN EKSTRA INTERNASIONAL > 99 AKTIVITAS BADAN INTERNASIONAL DAN BADAN EKSTRA INTERNASIONAL > 990 AKTIVITAS BADAN INTERNASIONAL DAN BADAN EKSTRA INTERNASIONAL > 9900 AKTIVITAS BADAN INTERNASIONAL DAN BADAN EKSTRA INTERNASIONAL\nCAKUPAN: LAINNYA Kelompok ini mencakup kegiatan lembaga/badan/instansi dari perwakilan negara asing, badan internasional dan regional lainnya, badan keuangan dan moneter internasional, bank dunia, organisasi bea cukai dunia, organisasi untuk kerjasama dan pengembangan ekonomi, organisasi negara-negara pengekspor minyak, perhimpunan negara-negara Eropa, perhimpunanperdagangan bebas negara-negara Eropa dan lain- lain, seperti perwakilan PBB dan suborganisasi, UNICEF, UNESCO, UNDP, WHO, ILO, ASEAN, IMF, OECD dan OPEC dan lain-lain serta kedutaan besar, dan konsulat yang ditentukan oleh negara dimana berada daripada negara yang diwakilinya. https://www.bps.go.id https://www.bps.go.id BADAN PUSAT STATISTIK Jl. dr. Sutomo No. 6-8, Jakarta 10710 Telp: 021 3841195, 3842508, 3810291 Fax: 021 3857046 Homepage: http://www.bps.go.id Email: bpshq@bps.go.id"
+  },
+  {
+    "kode_kbli": "10415",
+    "judul": "INDUSTRI MINYAK GORENG BUKAN MINYAK KELAPA DAN MINYAK KELAPA",
+    "hierarki": "Golongan Pokok 10 -> Golongan 104 -> Subgolongan 1041",
+    "cakupan": "INDUSTRI MINYAK GORENG BUKAN MINYAK KELAPA DAN MINYAK KELAPA",
+    "metadata": {
+      "added_via": "update_script"
+    }
+  },
+  {
+    "kode_kbli": "10432",
+    "judul": "INDUSTRI MINYAK MENTAH INTI KELAPA SAWIT (CRUDE PALM KERNEL OIL)",
+    "hierarki": "Golongan Pokok 10 -> Golongan 104 -> Subgolongan 1043",
+    "cakupan": "INDUSTRI MINYAK MENTAH INTI KELAPA SAWIT (CRUDE PALM KERNEL OIL)",
+    "metadata": {
+      "added_via": "update_script"
+    }
+  },
+  {
+    "kode_kbli": "13113",
+    "judul": "INDUSTRI PEMINTALAN BENANG JAHIT",
+    "hierarki": "Golongan Pokok 13 -> Golongan 131 -> Subgolongan 1311",
+    "cakupan": "INDUSTRI PEMINTALAN BENANG JAHIT",
+    "metadata": {
+      "added_via": "update_script"
+    }
+  },
+  {
+    "kode_kbli": "28174",
+    "judul": "INDUSTRI MESIN FOTOCOPI",
+    "hierarki": "Golongan Pokok 28 -> Golongan 281 -> Subgolongan 2817",
+    "cakupan": "INDUSTRI MESIN FOTOCOPI",
+    "metadata": {
+      "added_via": "update_script"
+    }
+  },
+  {
+    "kode_kbli": "35203",
+    "judul": "PENGADAAN GAS BIO",
+    "hierarki": "Golongan Pokok 35 -> Golongan 352 -> Subgolongan 3520",
+    "cakupan": "PENGADAAN GAS BIO",
+    "metadata": {
+      "added_via": "update_script"
+    }
+  },
+  {
+    "kode_kbli": "46412",
+    "judul": "PERDAGANGAN BESAR PAKAIAN",
+    "hierarki": "Golongan Pokok 46 -> Golongan 464 -> Subgolongan 4641",
+    "cakupan": "PERDAGANGAN BESAR PAKAIAN",
+    "metadata": {
+      "added_via": "update_script"
+    }
+  },
+  {
+    "kode_kbli": "46430",
+    "judul": "PERDAGANGAN BESAR ALAT FOTOGRAFI DAN BARANG OPTIK",
+    "hierarki": "Golongan Pokok 46 -> Golongan 464 -> Subgolongan 4643",
+    "cakupan": "PERDAGANGAN BESAR ALAT FOTOGRAFI DAN BARANG OPTIK",
+    "metadata": {
+      "added_via": "update_script"
+    }
+  },
+  {
+    "kode_kbli": "47214",
+    "judul": "PERDAGANGAN ECERAN HASIL PETERNAKAN",
+    "hierarki": "Golongan Pokok 47 -> Golongan 472 -> Subgolongan 4721",
+    "cakupan": "PERDAGANGAN ECERAN HASIL PETERNAKAN",
+    "metadata": {
+      "added_via": "update_script"
+    }
+  },
+  {
+    "kode_kbli": "47591",
+    "judul": "PERDAGANGAN ECERAN FURNITUR",
+    "hierarki": "Golongan Pokok 47 -> Golongan 475 -> Subgolongan 4759",
+    "cakupan": "PERDAGANGAN ECERAN FURNITUR",
+    "metadata": {
+      "added_via": "update_script"
+    }
+  },
+  {
+    "kode_kbli": "47650",
+    "judul": "PERDAGANGAN ECERAN KERTAS, KERTAS KARTON DAN BARANG DARI",
+    "hierarki": "Golongan Pokok 47 -> Golongan 476 -> Subgolongan 4765",
+    "cakupan": "PERDAGANGAN ECERAN KERTAS, KERTAS KARTON DAN BARANG DARI",
+    "metadata": {
+      "added_via": "update_script"
+    }
+  },
+  {
+    "kode_kbli": "47891",
+    "judul": "PERDAGANGAN ECERAN KAKI LIMA DAN LOS PASAR HEWAN HIDUP",
+    "hierarki": "Golongan Pokok 47 -> Golongan 478 -> Subgolongan 4789",
+    "cakupan": "PERDAGANGAN ECERAN KAKI LIMA DAN LOS PASAR HEWAN HIDUP",
+    "metadata": {
+      "added_via": "update_script"
+    }
+  },
+  {
+    "kode_kbli": "63911",
+    "judul": "AKTIVITAS KANTOR BERITA OLEH PEMERINTAH",
+    "hierarki": "Golongan Pokok 63 -> Golongan 639 -> Subgolongan 6391",
+    "cakupan": "AKTIVITAS KANTOR BERITA OLEH PEMERINTAH",
+    "metadata": {
+      "added_via": "update_script"
+    }
+  },
+  {
+    "kode_kbli": "84127",
+    "judul": "ADMINISTRASI PELAYANAN PEMERINTAH BIDANG LINGKUNGAN HIDUP",
+    "hierarki": "Golongan Pokok 84 -> Golongan 841 -> Subgolongan 8412",
+    "cakupan": "ADMINISTRASI PELAYANAN PEMERINTAH BIDANG LINGKUNGAN HIDUP",
+    "metadata": {
+      "added_via": "update_script"
+    }
+  },
+  {
+    "kode_kbli": "90030",
+    "judul": "AKTIVITAS IMPRESARIAT BIDANG SENI DAN FESTIVAL SENI",
+    "hierarki": "Golongan Pokok 90 -> Golongan 900 -> Subgolongan 9003",
+    "cakupan": "AKTIVITAS IMPRESARIAT BIDANG SENI DAN FESTIVAL SENI",
+    "metadata": {
+      "added_via": "update_script"
+    }
+  },
+  {
+    "kode_kbli": "91022",
+    "judul": "MUSEUM YANG DIKELOLA SWASTA",
+    "hierarki": "Golongan Pokok 91 -> Golongan 910 -> Subgolongan 9102",
+    "cakupan": "MUSEUM YANG DIKELOLA SWASTA",
+    "metadata": {
+      "added_via": "update_script"
+    }
   }
 ]

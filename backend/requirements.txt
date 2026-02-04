@@ -1,5 +1,6 @@
 # KBLI Code Lookup Backend
-# Pattern matching + AI-Enhanced Search
+# Pattern matching + AI-Enhanced Hybrid Search
+# v3.0 - BM25 + Vector Search + Semantic Re-ranking
 
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
@@ -7,3 +8,4 @@ openpyxl>=3.1.2
 python-multipart>=0.0.6
 python-dotenv>=1.0.0
 openai>=1.12.0
+numpy>=1.24.0  # For vector store operations

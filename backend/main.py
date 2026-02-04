@@ -1,7 +1,7 @@
 """
 FastAPI Backend for KBLI Code Lookup
-Pattern matching + AI-Enhanced Search
-Endpoints: /lookup, /lookup/batch, /search, /search/smart
+Pattern matching + AI-Enhanced Hybrid Search
+Endpoints: /lookup, /lookup/batch, /search, /search/smart, /search/hybrid
 """
 
 import json
@@ -18,7 +18,13 @@ from pydantic import BaseModel
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
+
+# Import Hybrid Search Engine
+try:
+    from backend.hybrid_search import HybridSearchEngine
+except ImportError:
+    from hybrid_search import HybridSearchEngine
 
 # Load environment variables
 load_dotenv()
@@ -37,9 +43,13 @@ except Exception as e:
 
 app = FastAPI(
     title="KBLI 2020 Code Lookup",
-    description="Pattern-matching + AI-Enhanced Semantic Search for KBLI codes",
-    version="2.1.0"
+    description="Pattern-matching + AI-Enhanced Hybrid Semantic Search for KBLI codes",
+    version="3.0.0"  # Major version bump for Hybrid Search
 )
+
+# Global Hybrid Search Engine
+hybrid_search_engine: HybridSearchEngine = None
+async_openai_client: AsyncOpenAI = None
 
 # CORS for frontend
 app.add_middleware(
@@ -52,11 +62,12 @@ app.add_middleware(
 
 # Global lookup dictionary: kode -> info
 kbli_lookup: dict[str, dict] = {}
+kbli_raw_data: list[dict] = []  # Raw data for hybrid search
 
 @app.on_event("startup")
 async def startup():
-    """Load KBLI data into memory as dictionary for O(1) lookup"""
-    global kbli_lookup
+    """Load KBLI data into memory and initialize Hybrid Search Engine"""
+    global kbli_lookup, kbli_raw_data, hybrid_search_engine, async_openai_client
     
     json_path = Path(__file__).parent.parent / "kbli_parsed_fast.json"
     if not json_path.exists():
@@ -65,6 +76,9 @@ async def startup():
     
     with open(json_path, 'r', encoding='utf-8') as f:
         kbli_data = json.load(f)
+    
+    # Store raw data for hybrid search
+    kbli_raw_data = kbli_data
     
     # Build lookup dictionary - normalize keys
     for entry in kbli_data:
@@ -84,6 +98,24 @@ async def startup():
                 kbli_lookup[padded] = kbli_lookup[code]
     
     print(f"✅ Loaded {len(kbli_lookup)} KBLI entries into lookup dictionary")
+    
+    # Initialize Hybrid Search Engine
+    api_key = os.getenv("OPENAI_API_KEY")
+    if api_key:
+        try:
+            async_openai_client = AsyncOpenAI(api_key=api_key)
+            hybrid_search_engine = HybridSearchEngine(async_openai_client)
+            
+            # Initialize with embeddings cache in parent directory
+            cache_dir = Path(__file__).parent.parent
+            await hybrid_search_engine.initialize(kbli_raw_data, cache_dir=cache_dir)
+            
+            print("✅ Hybrid Search Engine initialized!")
+        except Exception as e:
+            print(f"⚠️ Hybrid Search initialization failed: {e}")
+            hybrid_search_engine = None
+    else:
+        print("⚠️ No OPENAI_API_KEY - Hybrid Search disabled")
 
 def extract_kbli_codes(text: str) -> list[str]:
     """Extract potential KBLI codes from text using regex"""
@@ -480,6 +512,105 @@ async def smart_autocomplete(q: str, limit: int = 5):
         "expansion": expansion.get("expanded", q),
         "suggestions": suggestions
     }
+
+# ============================================================================
+# HYBRID SEARCH ENDPOINT (NEW - v3.0)
+# ============================================================================
+
+@app.get("/search/hybrid")
+async def hybrid_search(
+    q: str, 
+    top_k: int = 5,
+    use_reranking: bool = True
+):
+    """
+    🚀 Hybrid Search - Best accuracy for KBLI classification.
+    
+    Combines multiple retrieval methods:
+    1. BM25 keyword matching (handles exact terms)
+    2. Vector semantic search (handles synonyms, context)
+    3. Reciprocal Rank Fusion (combines rankings)
+    4. LLM semantic re-ranking (validates relevance)
+    
+    Args:
+        q: Search query (Indonesian, can be informal)
+        top_k: Number of results to return (default: 5)
+        use_reranking: Whether to use LLM re-ranking (default: True)
+    
+    Example queries:
+        - "jualan nasi goreng pinggir jalan" -> 56104, 47826
+        - "tukang ojek online" -> 49422
+        - "warung madura jual rokok" -> 47111
+        - "konveksi baju muslim" -> 14111
+    
+    Returns:
+        - results: List of KBLI matches with relevance scores
+        - reasoning: LLM explanation for each match
+    """
+    if not q or len(q) < 2:
+        return {
+            "query": q,
+            "error": "Query too short (min 2 characters)",
+            "results": []
+        }
+    
+    if not hybrid_search_engine:
+        # Fallback to smart search if hybrid not available
+        return await smart_search(q, limit=top_k)
+    
+    try:
+        # Perform hybrid search
+        result = await hybrid_search_engine.search(
+            query=q,
+            top_k=top_k,
+            use_reranking=use_reranking
+        )
+        
+        # Format results for API response
+        formatted_results = []
+        for r in result.get("results", []):
+            formatted_results.append({
+                "code": r.get("kode_kbli", r.get("kode", "")),
+                "judul": r.get("judul", ""),
+                "hierarki": r.get("hierarki", ""),
+                "cakupan": r.get("cakupan", "")[:300],
+                "relevance_score": r.get("relevance_score", r.get("rrf_score", 0)),
+                "reasoning": r.get("reasoning", "")
+            })
+        
+        return {
+            "query": q,
+            "method": "hybrid",
+            "total_candidates_evaluated": result.get("total_candidates", 0),
+            "bm25_results": result.get("bm25_top", 0),
+            "vector_results": result.get("vector_top", 0),
+            "use_reranking": use_reranking,
+            "results": formatted_results
+        }
+        
+    except Exception as e:
+        print(f"Hybrid search error: {e}")
+        # Fallback to smart search on error
+        return await smart_search(q, limit=top_k)
+
+@app.get("/search/hybrid/status")
+async def hybrid_search_status():
+    """
+    Check if Hybrid Search Engine is available and ready.
+    """
+    if hybrid_search_engine and hybrid_search_engine.is_ready:
+        return {
+            "status": "ready",
+            "documents_indexed": len(hybrid_search_engine.documents),
+            "bm25_terms": len(hybrid_search_engine.bm25.idf),
+            "vector_store_ready": hybrid_search_engine.vector_store.is_ready,
+            "embedding_model": hybrid_search_engine.vector_store.EMBEDDING_MODEL
+        }
+    else:
+        return {
+            "status": "not_ready",
+            "reason": "Hybrid Search Engine not initialized. Check OPENAI_API_KEY."
+        }
 
 @app.post("/lookup")
 async def lookup_single(request: LookupRequest):

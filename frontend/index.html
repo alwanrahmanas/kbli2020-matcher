@@ -13,6 +13,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap"
         rel="stylesheet">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
 
     <style>
         :root {
@@ -717,20 +718,25 @@
         // Otherwise use localhost
         const getApiBase = () => {
             const hostname = window.location.hostname;
-            const port = window.location.port;
 
-            // If accessed via IP address or hostname (not localhost), use the same host
-            if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-                // Use same host but with backend port (mapped to 3000 in docker-compose)
-                return `http://${hostname}:${port || 3000}`;
+            // 1. If opened as a local file (double click), use localhost backend
+            if (!hostname || hostname === '') {
+                return 'http://localhost:8000';
             }
 
-            // Default to localhost for local development
-            return 'http://localhost:8000';
+            // 2. If accessed via localhost/127.0.0.1 (Local Development)
+            if (hostname === 'localhost' || hostname === '127.0.0.1') {
+                return 'http://localhost:8000';
+            }
+
+            // 3. PRODUCTION (Cloudflare / Server)
+            // Return empty string to use relative path.
+            // Example: fetch('/search') -> https://domain.com/search (Handled by Nginx Proxy)
+            return '';
         };
 
         const API_BASE = getApiBase();
-        console.log('🔗 API Base URL:', API_BASE);
+        console.log('🔗 API Base URL:', API_BASE || '(Relative Path)');
 
         let resultDownloadUrl = '';
         let resultFileName = '';
@@ -802,34 +808,41 @@
             const btn = document.getElementById('searchBtn');
             const clearBtn = document.getElementById('clearBtn');
             const resultsDiv = document.getElementById('searchResults');
+            const aiExpansionDiv = document.getElementById('aiExpansion');
 
             btn.disabled = true;
-            btn.innerHTML = '<span>🤖</span> AI Processing...';
+            btn.innerHTML = '<span>🚀</span> Processing Results...';
 
             // Hide clear button while processing
             if (clearBtn) clearBtn.style.display = 'none';
 
             // Hide previous expansion
-            document.getElementById('aiExpansion').style.display = 'none';
+            aiExpansionDiv.style.display = 'none';
 
             try {
-                // Use AI Smart Search
-                const response = await fetch(`${API_BASE}/search/smart?q=${encodeURIComponent(query)}&limit=10`);
-                if (!response.ok) throw new Error('API Error');
+                // Use new Hybrid Search with reranking
+                const response = await fetch(`${API_BASE}/search/hybrid?q=${encodeURIComponent(query)}&top_k=5`);
+                if (!response.ok) throw new Error('Failed to fetch from backend');
 
                 const data = await response.json();
 
-                // Show AI expansion info
-                if (data.expansion && data.expansion.ai_used) {
+                // Show Hybrid Search info
+                if (data.method === 'hybrid') {
+                    aiExpansionDiv.style.display = 'block';
+                    aiExpansionDiv.innerHTML = `<span style="color: var(--accent-primary);">🚀 Hybrid Search Engine:</span> 
+                        Combining BM25, Vector Search & LLM Reranking (Evaluated <strong>${data.total_candidates_evaluated || 0} candidates</strong>)`;
+                } else if (data.expansion && data.expansion.ai_used) {
+                    // Fallback smart search
+                    aiExpansionDiv.style.display = 'block';
                     document.getElementById('expansionText').textContent = data.expansion.expanded;
-                    document.getElementById('aiExpansion').style.display = 'block';
                 }
 
                 renderSearchResults(data, resultsDiv);
                 resultsDiv.classList.add('active');
 
             } catch (error) {
-                alert('Error: ' + error.message + '\n\nPastikan backend berjalan di localhost:8000');
+                console.error("Search Error:", error);
+                alert(`Error: ${error.message}\n\nPastikan backend berjalan di port 8000.`);
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = '<span>🤖</span> Smart Search';
@@ -840,27 +853,50 @@
         function renderSearchResults(data, container) {
             if (!data.results || data.results.length === 0) {
                 container.innerHTML = `
-                    <div class="search-meta">Tidak ada hasil untuk "${data.query}"</div>
+                    <div class="search-meta">Tidak ada hasil yang relevan untuk "${data.query}"</div>
                 `;
                 return;
             }
 
-            let html = `<div class="search-meta">🔍 Ditemukan ${data.total} hasil untuk "${data.query}"</div>`;
+            let html = `<div class="search-meta">🔍 Menampilkan ${data.results.length} hasil terbaik</div>`;
 
             data.results.forEach(result => {
+                // Handling new hybrid search fields
+                const score = result.relevance_score ? (result.relevance_score * 100).toFixed(0) + '%' : (result.score ? result.score.toFixed(0) : 'N/A');
+                const reasonHtml = result.reasoning ?
+                    `<div style="margin-top:0.75rem; padding:0.75rem; background:rgba(255,255,255,0.05); border-radius:8px; font-size:0.85rem; border-left:3px solid var(--accent-secondary); color:#e2e8f0;">
+                        <span style="color:var(--accent-secondary); font-weight:600;">🤖 AI Reasoning:</span> ${result.reasoning}
+                     </div>` : '';
+
+                // Color based on score
+                let scoreColor = '#64748b';
+                if (result.relevance_score) {
+                    if (result.relevance_score > 0.8) scoreColor = '#22c55e';
+                    else if (result.relevance_score > 0.6) scoreColor = '#f59e0b';
+                }
+
                 html += `
                     <div class="result-card found">
                         <div class="result-header">
                             <span class="result-code">${result.code}</span>
+                            <div class="status-badge" style="background: rgba(255,255,255,0.1); color: ${scoreColor}; border: 1px solid ${scoreColor};">
+                                Match: ${score}
+                            </div>
                         </div>
                         <div class="result-title">${result.judul}</div>
                         <div class="result-hierarki">📍 ${result.hierarki}</div>
+                        <div class="result-cakupan" style="margin-top: 0.5rem; font-size: 0.9rem;">
+                            ${result.cakupan ? `<strong>Cakupan:</strong> ${result.cakupan}` : ''}
+                        </div>
+                        ${reasonHtml}
                     </div>
                 `;
             });
 
             container.innerHTML = html;
         }
+
+
 
         // Code autocomplete
         async function handleCodeAutocomplete(event) {

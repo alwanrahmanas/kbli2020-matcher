@@ -60,10 +60,10 @@ echo   🎉 Application is running!
 echo ========================================
 echo.
 echo Access from this computer:
-echo   👉 http://localhost:3000/app
+echo   👉 http://localhost:3001/app
 echo.
 echo Access from other devices on the same network:
-echo   👉 http://%IP%:3000/app
+echo   👉 http://%IP%:3001/app
 echo.
 echo ========================================
 echo.
@@ -74,6 +74,6 @@ echo.
 REM Open browser
 echo Opening browser...
 timeout /t 2 /nobreak >nul
-start http://localhost:3000/app
+start http://localhost:3001/app
 
 pause
