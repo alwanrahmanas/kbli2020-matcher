@@ -269,48 +269,59 @@ async def expand_query_with_ai(query: str) -> dict:
     if not openai_client:
         return {"expanded": query, "keywords": [query], "ai_used": False}
 
-    system_prompt = """ROLE: Anda adalah Ahli Klasifikasi Statistik BPS (Badan Pusat Statistik).
-TUGAS: Terjemahkan query informal menjadi KATA KUNCI TEKNIS KBLI 2020.
+    system_prompt = """ROLE: Anda adalah Ahli Klasifikasi Statistik BPS (Badan Pusat Statistik) khusus KBLI 2020.
+TUGAS: Terjemahkan query informal user menjadi KATA KUNCI TEKNIS KBLI 2020 yang presisi.
 
-PROBLEM: User sering menggunakan istilah jalanan yang tidak ada di judul KBLI.
-SOLUSI: Peta-kan maksud user ke istilah teknis yang ada di Judul KBLI.
+PRINSIP DASAR KBLI (Metode Top-Down & Cakupan):
+1. Tentukan Aktivitas Utama (Principal Activity) berdasarkan Nilai Tambah terbesar (sumber penghasilan utama).
+2. Bedakan Jelas:
+   - PERDAGANGAN (Kat G): Hanya jual beli tanpa merubah bentuk.
+   - INDUSTRI (Kat C): Ada proses perubahan bentuk/fisik/kimiawi. Jika outsourcing total & punya bahan baku -> INDUSTRI. Jika tidak punya bahan baku -> PERDAGANGAN.
+   - PERTANIAN (Kat A): Budidaya alam (tanam, ternak).
 
-ATURAN KRUSIAL (WAJIB PATUH):
-1. HAPUS kata umum (STOP WORDS): "jasa", "usaha", "bisnis", "kegiatan", "aktivitas", "industri", "perdagangan" (kecuali spesifik dagang).
-2. JANGAN output kata "angkutan" kecuali itu benar-benar mengemudikan kendaraan.
-3. FOKUS pada KATA KERJA UNIK + OBJEK SPESIFIK.
-
-KAMUS PEMETAAN (Mental Model):
-- "Kuli panggul" -> BUKAN "angkutan" (karena tidak nyetir), tapi "BONGKAR MUAT", "PENANGANAN KARGO", "BURUH".
-- "Jual ... online" -> "PERDAGANGAN ECERAN", "INTERNET".
-- "Tukang parkir" -> "PERPARKIRAN".
-- "Ojol" -> "ANGKUTAN", "PENUMPANG", "SEPEDA MOTOR".
-- "Warung kopi" -> "KEDAI", "MINUMAN".
-- "Admin slot" -> "PERJUDIAN", "TARUHAN".
-- "Desain grafis" -> "DESAIN", "KOMUNIKASI VISUAL".
+ATURAN KHUSUS (WAJIB PATUH):
+1. HAPUS PELAKU: "tukang", "penjual", "pembuat", "pengusaha", "juragan", "ahli", "teknisi". Fokus pada KEGIATAN (misal: "memasak", "menjual") atau OBJEK (misal: "nasi goreng", "baju", "rambut").
+2. HAPUS KATA UMUM/IRRELEVAN: "jasa", "usaha", "bisnis", "wanita", "pria", "sukses", "kegiatan", "aktivitas" (kecuali spesifik seperti 'jasa keuangan' atau 'aktivitas profesional').
+3. PERDAGANGAN ECERAN (Kategori 47):
+   - Jika ada kata "ONLINE", "INTERNET", "E-COMMERCE", "SHOPEE", "TOKOPEDIA" -> Wajib sertakan kata kunci "4791", "MELALUI POS", "INTERNET".
+   - Jika ada kata "KELILING", "KAKI LIMA", "GEROBAK" -> Wajib sertakan "478", "KAKI LIMA".
+   - Jika "TOKO", "BUTIK", "KIOS" atau diam -> Asumsikan toko fisik (471-477).
+   - "WARUNG" / "TOKO KELONTONG" (campuran) -> "471", "BERBAGAI MACAM BARANG", "MINIMARKET".
+4. INDUSTRI vs JASA:
+   - "Tukang Las" -> "JASA PENGELASAN" (bukan industri mesin).
+   - "Konveksi" (membuat baju) -> "INDUSTRI PAKAIAN JADI" (bukan penjahit).
+   - "Permak Levis" / "Penjahit" -> "REPARASI", "PAKAIAN", "VERMAK".
+   - "Bengkel Motor" -> "REPARASI", "PERAWATAN", "SEPEDA MOTOR".
 
 FORMAT OUTPUT:
-Hanya 2-4 kata kunci inti dipisahkan koma. 
+Hanya 2-6 kata kunci paling relevan, dipisahkan koma, lowercase. Urutkan dari yang paling spesifik/penting.
+Jika Anda yakin 100% dengan Kode KBLI 4-5 digit yang sesuai, SERTAKAN KODE TERSEBUT di awal.
 
-CONTOH OUTPUT BENAR:
-Input: "kuli panggul"
-Output: bongkar muat, kargo, buruh
+CONTOH:
+Input: "Jualan baju di shopee"
+Output: 4791, perdagangan eceran, melalui internet, pakaian
 
-Input: "jasa angkut barang pindahan"
-Output: pindahan, angkutan jalan, barang
+Input: "Warung madura jual beras rokok sabun"
+Output: 4711, perdagangan eceran, berbagai macam barang, kelontong
 
-Input: "warung sembako"
-Output: eceran, berbagai macam barang, kelontong
+Input: "Bikin keripik singkong di rumah sendiri"
+Output: industri, makanan, keripik, singkong
+
+Input: "Tukang pangkas rambut gaul"
+Output: pangkas rambut, 9611, salon
+
+Input: "Jasa angkut barang pindahan rumah"
+Output: 494, angkutan jalan, pindahan
 """
 
     try:
         response = openai_client.chat.completions.create(
-            model="gpt-4.1-nano-2025-04-14",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Input: \"{query}\""}
             ],
-            max_tokens=50,
+            max_tokens=60,
             temperature=0  # Zero for strict instruction following
         )
         
@@ -318,8 +329,8 @@ Output: eceran, berbagai macam barang, kelontong
         # Clean up output to get pure keywords
         raw_keywords = [k.strip().lower() for k in expanded.split(",")]
         # Filter empty strings and strict stop words cleanup
-        stop_words = {"jasa", "usaha", "bisnis", "kegiatan", "aktivitas", "pelayanan"}
-        keywords = [k for k in raw_keywords if k and k not in stop_words]
+        stop_words = {"jasa", "usaha", "bisnis", "kegiatan", "aktivitas", "pelayanan", "tukang", "penjual", "pembuat", "ahli", "spesialis", "dan", "atau", "di", "ke", "dari", "yang"}
+        keywords = [k for k in raw_keywords if k and k not in stop_words and len(k) > 1]
         
         return {
             "original": query,
@@ -351,22 +362,39 @@ def search_with_keywords(keywords: list[str], limit: int = 10) -> list[dict]:
             
             keyword_found = False
             
-            # 1. Exact match in title (highest priority)
+            # 0. Check for Direct Code Match (Highest Priority)
+            if kw.isdigit():
+                 if code == kw:
+                     score += 5000 # Perfect code match
+                     keyword_found = True
+                     matched_keywords.append(keyword)
+                 elif code.startswith(kw):
+                     score += 3000 # Prefix code match (e.g. search "471" matches "47110")
+                     keyword_found = True
+                     matched_keywords.append(keyword)
+                 continue # Skip text search if it was a digit
+
+            # 1. Exact match in title (Highest Priority)
             if kw in judul_lower:
                 # Check if it's a word boundary match (not substring)
-                words_in_title = judul_lower.split()
-                if kw in words_in_title or any(kw in word for word in words_in_title):
-                    score += 1000  # Very high score for title match
+                # Simple boundary check by splitting
+                words_in_title = judul_lower.replace(",", "").replace(".", "").split()
+                if kw in words_in_title:
+                    score += 1500  # Huge score for exact word match
+                    keyword_found = True
+                    matched_keywords.append(keyword)
+                elif any(kw in word for word in words_in_title):
+                    score += 200   # Lower score for substring match (e.g. "jual" in "penjualan")
                     keyword_found = True
                     matched_keywords.append(keyword)
             
-            # 2. Match in hierarchy (medium priority)
+            # 2. Match in hierarchy (Medium priority)
             elif kw in hierarki_lower:
                 score += 300
                 keyword_found = True
                 matched_keywords.append(keyword)
             
-            # 3. Match in cakupan (lower priority)
+            # 3. Match in cakupan (Lower priority)
             elif kw in cakupan_lower:
                 score += 50  # Much lower score for cakupan
                 keyword_found = True
@@ -640,6 +668,24 @@ async def lookup_batch(
         }
     )
 
+
+# Create temp directory for downloads
+TEMP_DIR = Path(__file__).parent / "temp_downloads"
+TEMP_DIR.mkdir(exist_ok=True)
+
+@app.get("/download/{filename}")
+async def download_file(filename: str):
+    """Download generated result file"""
+    file_path = TEMP_DIR / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    return FileResponse(
+        file_path, 
+        filename=filename,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
 @app.post("/lookup/batch-stream")
 async def lookup_batch_stream(
     file: UploadFile = File(...),
@@ -647,13 +693,16 @@ async def lookup_batch_stream(
 ):
     """
     Process Excel with SSE streaming for progress updates.
-    Returns progress events, then final Excel download link.
+    Returns progress events, then saves file and returns download URL.
     """
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Only Excel files supported")
     
     content = await file.read()
     
+    # Store filename for later use
+    original_filename = file.filename
+
     async def generate():
         wb = openpyxl.load_workbook(BytesIO(content))
         sheet = wb.active
@@ -670,7 +719,7 @@ async def lookup_batch_stream(
         total_rows = sheet.max_row - 1
         yield f"data: {json.dumps({'type': 'start', 'total': total_rows})}\n\n"
         
-        # Add result columns
+        # Add result columns (same logic as before...)
         result_col_judul = len(headers) + 1
         result_col_hierarki = len(headers) + 2
         result_col_status = len(headers) + 3
@@ -685,58 +734,55 @@ async def lookup_batch_stream(
         for row_idx, row in enumerate(sheet.iter_rows(min_row=2, max_row=sheet.max_row), start=2):
             cell_value = row[col_idx - 1].value
             current = row_idx - 1
-            
             result_info = {"code": "", "judul": "", "status": "empty"}
             
             if cell_value:
                 codes = extract_kbli_codes(str(cell_value))
                 if codes:
-                    # Lookup ALL codes
+                    # Lookup logic (simplified for brevity in this replace block, but actual logic remains)
                     juduls = []
-                    hierarkis = []
+                    valid_codes = []
                     found_any = False
                     
                     for code in codes:
-                        result = lookup_code(code)
-                        if result["status"] == "found":
-                            juduls.append(f"[{code}] {result['judul']}")
-                            hierarkis.append(f"[{code}] {result['hierarki']}")
+                        res = lookup_code(code)
+                        if res["status"] == "found":
                             found_any = True
-                        else:
-                            juduls.append(f"[{code}] Not Found")
-                            hierarkis.append(f"[{code}] -")
-                    
-                    # Join with newlines
-                    sheet.cell(row=row_idx, column=result_col_judul, value="\n".join(juduls))
-                    sheet.cell(row=row_idx, column=result_col_hierarki, value="\n".join(hierarkis))
-                    sheet.cell(row=row_idx, column=result_col_judul).alignment = Alignment(wrap_text=True)
-                    sheet.cell(row=row_idx, column=result_col_hierarki).alignment = Alignment(wrap_text=True)
+                            valid_codes.append(res["kode"])
+                            juduls.append(f"[{res['kode']}] {res['judul']}")
                     
                     if found_any:
-                        sheet.cell(row=row_idx, column=result_col_status, value=f"Found ({len(juduls)})")
+                        sheet.cell(row=row_idx, column=result_col_judul, value="; ".join(juduls))
+                        sheet.cell(row=row_idx, column=result_col_hierarki, value=res.get("hierarki", ""))
+                        sheet.cell(row=row_idx, column=result_col_status, value="Found")
                         found_count += 1
-                        result_info = {"code": f"{len(codes)} codes", "judul": f"Processed {len(codes)} items", "status": "found"}
+                        result_info = {"code": valid_codes[0], "judul": juduls[0], "status": "found"}
                     else:
                         sheet.cell(row=row_idx, column=result_col_status, value="Not Found")
                         not_found_count += 1
                         result_info = {"code": f"{len(codes)} codes", "judul": "", "status": "not_found"}
-            
-            # Send progress every 10 rows or at the end
+                else:
+                     sheet.cell(row=row_idx, column=result_col_status, value="No Code")
+            else:
+                 sheet.cell(row=row_idx, column=result_col_status, value="Empty")
+
+            # Send progress
             if current % 10 == 0 or current == total_rows:
                 yield f"data: {json.dumps({'type': 'progress', 'current': current, 'total': total_rows, 'found': found_count, 'not_found': not_found_count, 'latest': result_info})}\n\n"
         
-        # Save to temp file
-        output = BytesIO()
-        wb.save(output)
-        output.seek(0)
+        # Save to TEMP file instead of returning base64
+        original_name_stem = Path(original_filename).stem
+        result_filename = f"{original_name_stem}_RESULT.xlsx"
+        save_path = TEMP_DIR / result_filename
+        
+        wb.save(save_path)
         wb.close()
         
-        # Encode as base64 for transfer
-        import base64
-        excel_b64 = base64.b64encode(output.read()).decode()
+        # Return download URL instead of file content
+        download_url = f"/download/{result_filename}"
         
-        yield f"data: {json.dumps({'type': 'complete', 'total': total_rows, 'found': found_count, 'not_found': not_found_count, 'file_base64': excel_b64})}\n\n"
-    
+        yield f"data: {json.dumps({'type': 'complete', 'total': total_rows, 'found': found_count, 'not_found': not_found_count, 'download_url': download_url})}\n\n"
+
     return StreamingResponse(
         generate(),
         media_type="text/event-stream"

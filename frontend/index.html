@@ -314,11 +314,23 @@
             box-shadow: 0 10px 36px rgba(34, 197, 94, 0.45);
         }
 
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.15);
+            transform: translateY(-2px);
+        }
+
         /* Results */
         .result-display {
             display: none;
             margin-top: 1.5rem;
         }
+
 
         .result-display.active {
             display: block;
@@ -583,7 +595,8 @@
                     <div class="card-icon">🤖</div>
                     <h2>AI Smart Search</h2>
                 </div>
-                <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">Ketik bahasa informal, AI
+                <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">Ketik bahasa informal,
+                    AI
                     akan menerjemahkan ke istilah KBLI</p>
 
                 <div class="input-group">
@@ -598,9 +611,14 @@
                     </div>
                 </div>
 
-                <button class="btn btn-primary" id="searchBtn" onclick="searchKBLI()">
-                    <span>🤖</span> Smart Search
-                </button>
+                <div style="display: flex; gap: 1rem;">
+                    <button class="btn btn-primary" id="searchBtn" onclick="searchKBLI()">
+                        <span>🤖</span> Smart Search
+                    </button>
+                    <button class="btn btn-secondary" id="clearBtn" onclick="clearSearch()" style="display: none;">
+                        <span>🗑️</span> Clear
+                    </button>
+                </div>
 
                 <div class="result-display" id="searchResults">
                     <!-- Search results will be inserted here -->
@@ -651,7 +669,8 @@
                     <div
                         style="background: var(--bg-secondary); padding: 1rem; border-radius: 12px; margin-bottom: 1rem;">
                         <p><strong>📄 File:</strong> <span id="fileName"></span></p>
-                        <p style="color: var(--text-secondary); margin-top: 0.5rem;"><span id="totalRows"></span> baris
+                        <p style="color: var(--text-secondary); margin-top: 0.5rem;"><span id="totalRows"></span>
+                            baris
                             data</p>
                     </div>
 
@@ -713,7 +732,7 @@
         const API_BASE = getApiBase();
         console.log('🔗 API Base URL:', API_BASE);
 
-        let resultExcelBlob = null;
+        let resultDownloadUrl = '';
         let resultFileName = '';
         let searchTimeout = null;
         let autocompleteTimeout = null;
@@ -764,6 +783,15 @@
             }
         }
 
+        function clearSearch() {
+            document.getElementById('searchInput').value = '';
+            document.getElementById('searchResults').innerHTML = '';
+            document.getElementById('searchResults').classList.remove('active');
+            document.getElementById('aiExpansion').style.display = 'none';
+            document.getElementById('clearBtn').style.display = 'none';
+            document.getElementById('searchInput').focus();
+        }
+
         async function searchKBLI() {
             const query = document.getElementById('searchInput').value.trim();
             if (!query || query.length < 2) {
@@ -772,10 +800,14 @@
             }
 
             const btn = document.getElementById('searchBtn');
+            const clearBtn = document.getElementById('clearBtn');
             const resultsDiv = document.getElementById('searchResults');
 
             btn.disabled = true;
             btn.innerHTML = '<span>🤖</span> AI Processing...';
+
+            // Hide clear button while processing
+            if (clearBtn) clearBtn.style.display = 'none';
 
             // Hide previous expansion
             document.getElementById('aiExpansion').style.display = 'none';
@@ -801,6 +833,7 @@
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = '<span>🤖</span> Smart Search';
+                if (clearBtn) clearBtn.style.display = 'inline-flex';
             }
         }
 
@@ -1013,7 +1046,11 @@
                             try {
                                 const data = JSON.parse(line.slice(6));
 
-                                if (data.type === 'progress') {
+                                if (data.type === 'start') {
+                                    // Reset UI
+                                    foundCount.textContent = '0';
+                                    notFoundCount.textContent = '0';
+                                } else if (data.type === 'progress') {
                                     const percent = Math.round((data.current / data.total) * 100);
                                     progressBar.style.width = `${percent}%`;
                                     progressBar.textContent = `${percent}%`;
@@ -1027,17 +1064,8 @@
                                     foundCount.textContent = data.found;
                                     notFoundCount.textContent = data.not_found;
 
-                                    const binaryString = atob(data.file_base64);
-                                    const bytes = new Uint8Array(binaryString.length);
-                                    for (let i = 0; i < binaryString.length; i++) {
-                                        bytes[i] = binaryString.charCodeAt(i);
-                                    }
-                                    resultExcelBlob = new Blob([bytes], {
-                                        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                                    });
-
-                                    const originalName = uploadedFile.name.replace(/\.xlsx?$/i, '');
-                                    resultFileName = `${originalName}_KBLI_result.xlsx`;
+                                    // Store download URL instead of blob
+                                    resultDownloadUrl = `${API_BASE}${data.download_url}`;
 
                                     document.getElementById('downloadInfo').textContent =
                                         `${data.total} baris diproses • ${data.found} ditemukan • ${data.not_found} tidak ditemukan`;
@@ -1058,19 +1086,11 @@
         }
 
         function downloadResult() {
-            if (!resultExcelBlob) {
-                alert('File belum siap. Silakan proses ulang.');
+            if (!resultDownloadUrl) {
+                alert('Tidak ada file untuk didownload');
                 return;
             }
-
-            const url = URL.createObjectURL(resultExcelBlob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = resultFileName;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            window.location.href = resultDownloadUrl;
         }
 
         // Drag and drop
