@@ -83,3 +83,18 @@ A: Itu masalah DNS internet. Gunakan **Cara 2 (Local Mode)** saja.
              ▼
         [ HASIL FINAL ] -> Dikirim ke User
 ```
+
+---
+
+## 📁 Project Structure (New)
+
+```
+kbli2020/
+├── backend/             # FastAPI Backend Logic
+├── frontend/            # HTML/JS Frontend UI
+├── docs/                # Documentation & Guides
+├── scripts/             # Python Utility Scripts
+├── kbli_parsed_fast.json # KBLI Database
+├── docker-compose.yml   # Docker Config
+└── README.md            # This Guide
+```

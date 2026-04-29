@@ -18,6 +18,8 @@ __pycache__/
 *_KBLI_result.xlsx
 temp/
 output/
+*.pkl
+*.pdf
 
 # IDE / Editor
 .vscode/

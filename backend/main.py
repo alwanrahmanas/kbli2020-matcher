@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from typing import Optional
 from io import BytesIO
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,37 +42,24 @@ try:
 except Exception as e:
     print(f"⚠️ OpenAI initialization failed: {e}")
 
-app = FastAPI(
-    title="KBLI 2020 Code Lookup",
-    description="Pattern-matching + AI-Enhanced Hybrid Semantic Search for KBLI codes",
-    version="3.0.0"  # Major version bump for Hybrid Search
-)
-
 # Global Hybrid Search Engine
 hybrid_search_engine: HybridSearchEngine = None
 async_openai_client: AsyncOpenAI = None
-
-# CORS for frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Global lookup dictionary: kode -> info
 kbli_lookup: dict[str, dict] = {}
 kbli_raw_data: list[dict] = []  # Raw data for hybrid search
 
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """Load KBLI data into memory and initialize Hybrid Search Engine"""
     global kbli_lookup, kbli_raw_data, hybrid_search_engine, async_openai_client
     
     json_path = Path(__file__).parent.parent / "kbli_parsed_fast.json"
     if not json_path.exists():
         print("ERROR: kbli_parsed_fast.json not found!")
+        # We still yield because FastAPI expects the lifespan to yield even on failure
+        yield
         return
     
     with open(json_path, 'r', encoding='utf-8') as f:
@@ -116,6 +104,26 @@ async def startup():
             hybrid_search_engine = None
     else:
         print("⚠️ No OPENAI_API_KEY - Hybrid Search disabled")
+
+    yield
+    # Shutdown logic (none needed here but this is where it would go)
+    print("Shutting down...")
+
+app = FastAPI(
+    title="KBLI 2020 Code Lookup",
+    description="Pattern-matching + AI-Enhanced Hybrid Semantic Search for KBLI codes",
+    version="3.0.0",  # Major version bump for Hybrid Search
+    lifespan=lifespan
+)
+
+# CORS for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def extract_kbli_codes(text: str) -> list[str]:
     """Extract potential KBLI codes from text using regex"""

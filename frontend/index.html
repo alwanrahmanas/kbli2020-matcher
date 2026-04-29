@@ -17,20 +17,20 @@
 
     <style>
         :root {
-            --bg-primary: #0a0a0f;
-            --bg-secondary: #12121a;
-            --bg-card: #1a1a28;
-            --accent-primary: #6366f1;
-            --accent-secondary: #8b5cf6;
-            --accent-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%);
-            --text-primary: #f1f5f9;
-            --text-secondary: #94a3b8;
+            --bg-primary: #f8fafc;
+            --bg-secondary: #ffffff;
+            --bg-card: #ffffff;
+            --accent-primary: #f97316; /* Orange 500 */
+            --accent-secondary: #fb923c; /* Orange 400 */
+            --accent-gradient: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+            --text-primary: #0f172a;
+            --text-secondary: #334155;
             --text-muted: #64748b;
-            --success: #22c55e;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-            --border: rgba(255, 255, 255, 0.08);
-            --glass: rgba(255, 255, 255, 0.03);
+            --success: #16a34a;
+            --warning: #d97706;
+            --danger: #dc2626;
+            --border: rgba(0, 0, 0, 0.1);
+            --glass: rgba(255, 255, 255, 0.8);
         }
 
         * {
@@ -55,9 +55,9 @@
             width: 100%;
             height: 100%;
             background:
-                radial-gradient(circle at 15% 85%, rgba(99, 102, 241, 0.12) 0%, transparent 45%),
-                radial-gradient(circle at 85% 15%, rgba(139, 92, 246, 0.12) 0%, transparent 45%),
-                radial-gradient(circle at 50% 50%, rgba(168, 85, 247, 0.08) 0%, transparent 50%);
+                radial-gradient(circle at 15% 85%, rgba(249, 115, 22, 0.08) 0%, transparent 45%),
+                radial-gradient(circle at 85% 15%, rgba(234, 88, 12, 0.08) 0%, transparent 45%),
+                radial-gradient(circle at 50% 50%, rgba(251, 146, 60, 0.05) 0%, transparent 50%);
             pointer-events: none;
             z-index: -1;
         }
@@ -91,7 +91,7 @@
             align-items: center;
             justify-content: center;
             font-size: 1.75rem;
-            box-shadow: 0 8px 40px rgba(99, 102, 241, 0.35);
+            box-shadow: 0 8px 40px rgba(249, 115, 22, 0.35);
         }
 
         h1 {
@@ -118,15 +118,17 @@
         }
 
         .badge {
-            background: var(--glass);
+            background: var(--bg-card);
             border: 1px solid var(--border);
             padding: 0.5rem 1rem;
             border-radius: 50px;
-            font-size: 0.8rem;
-            color: var(--text-muted);
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-secondary);
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
         }
 
         .badge-icon {
@@ -142,11 +144,12 @@
             margin-bottom: 1.5rem;
             backdrop-filter: blur(10px);
             transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
         }
 
         .card:hover {
             transform: translateY(-3px);
-            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
         }
 
         .card-header {
@@ -172,7 +175,8 @@
             align-items: center;
             justify-content: center;
             font-size: 1.4rem;
-            box-shadow: 0 4px 16px rgba(99, 102, 241, 0.3);
+            box-shadow: 0 4px 16px rgba(249, 115, 22, 0.3);
+            color: white;
         }
 
         /* Input Section */
@@ -192,13 +196,13 @@
         input[type="text"],
         select {
             width: 100%;
-            padding: 1rem 1.25rem;
+            padding: 1.15rem 1.25rem;
             background: var(--bg-secondary);
-            border: 1px solid var(--border);
+            border: 2px solid var(--border);
             border-radius: 12px;
             color: var(--text-primary);
             font-family: inherit;
-            font-size: 1rem;
+            font-size: 1.05rem;
             transition: border-color 0.2s, box-shadow 0.2s;
         }
 
@@ -214,7 +218,7 @@
         select:focus {
             outline: none;
             border-color: var(--accent-primary);
-            box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.2);
+            box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.2);
         }
 
         input::placeholder {
@@ -235,7 +239,7 @@
             overflow-y: auto;
             z-index: 1000;
             display: none;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
         }
 
         .autocomplete-dropdown.active {
@@ -255,7 +259,7 @@
         }
 
         .autocomplete-item:hover {
-            background: rgba(99, 102, 241, 0.1);
+            background: rgba(249, 115, 22, 0.1);
         }
 
         .autocomplete-item-code {
@@ -290,12 +294,12 @@
         .btn-primary {
             background: var(--accent-gradient);
             color: white;
-            box-shadow: 0 6px 24px rgba(99, 102, 241, 0.35);
+            box-shadow: 0 6px 24px rgba(249, 115, 22, 0.35);
         }
 
         .btn-primary:hover {
             transform: translateY(-2px);
-            box-shadow: 0 10px 36px rgba(99, 102, 241, 0.45);
+            box-shadow: 0 10px 36px rgba(249, 115, 22, 0.45);
         }
 
         .btn-primary:disabled {
@@ -316,13 +320,13 @@
         }
 
         .btn-secondary {
-            background: rgba(255, 255, 255, 0.1);
+            background: rgba(0, 0, 0, 0.05);
             color: var(--text-primary);
             border: 1px solid var(--border);
         }
 
         .btn-secondary:hover {
-            background: rgba(255, 255, 255, 0.15);
+            background: rgba(0, 0, 0, 0.08);
             transform: translateY(-2px);
         }
 
@@ -408,8 +412,9 @@
             font-size: 0.9rem;
             margin-bottom: 0.75rem;
             padding: 0.75rem 1rem;
-            background: rgba(0, 0, 0, 0.2);
+            background: rgba(249, 115, 22, 0.05);
             border-radius: 8px;
+            border-left: 3px solid var(--accent-primary);
         }
 
         .result-cakupan {
@@ -438,7 +443,7 @@
         .upload-zone:hover,
         .upload-zone.dragover {
             border-color: var(--accent-primary);
-            background: rgba(99, 102, 241, 0.05);
+            background: rgba(249, 115, 22, 0.05);
         }
 
         .upload-zone input[type="file"] {
@@ -582,10 +587,10 @@
             <p class="subtitle">Cari klasifikasi kode KBLI dengan cepat - AI Smart Search</p>
 
             <div class="badge-row">
+                <span class="badge"><span class="badge-icon">🟠</span> Sensus Ekonomi 2026</span>
                 <span class="badge"><span class="badge-icon">🤖</span> AI Smart Search</span>
                 <span class="badge"><span class="badge-icon">⚡</span> Fast Pattern Matching</span>
                 <span class="badge"><span class="badge-icon">📊</span> Batch Excel Processing</span>
-                <span class="badge"><span class="badge-icon">📥</span> Download Results</span>
             </div>
         </header>
 
@@ -606,7 +611,7 @@
                         onkeyup="handleSearchEnter(event)" autocomplete="off">
 
                     <div id="aiExpansion"
-                        style="display:none; margin-top: 0.75rem; padding: 0.75rem; background: rgba(99,102,241,0.1); border-radius: 8px; font-size: 0.85rem;">
+                        style="display:none; margin-top: 0.75rem; padding: 0.75rem; background: rgba(249,115,22,0.1); border-radius: 8px; font-size: 0.85rem;">
                         <span style="color: var(--accent-primary);">🤖 AI Expansion:</span> <span id="expansionText"
                             style="color: var(--text-secondary);"></span>
                     </div>
@@ -707,7 +712,7 @@
         </div>
 
         <footer>
-            <p>KBLI 2020 Code Lookup v2.1 • AI Smart Search + Pattern Matching</p>
+            <p>KBLI 2020 Code Lookup v3.0 • Tema Sensus Ekonomi 2026</p>
             <p style="margin-top: 0.5rem;">Sumber: Klasifikasi Baku Lapangan Usaha Indonesia 2020 (BPS)</p>
         </footer>
     </div>
@@ -826,22 +831,22 @@
                 // Handling new hybrid search fields
                 const score = result.relevance_score ? (result.relevance_score * 100).toFixed(0) + '%' : (result.score ? result.score.toFixed(0) : 'N/A');
                 const reasonHtml = result.reasoning ?
-                    `<div style="margin-top:0.75rem; padding:0.75rem; background:rgba(255,255,255,0.05); border-radius:8px; font-size:0.85rem; border-left:3px solid var(--accent-secondary); color:#e2e8f0;">
+                    `<div style="margin-top:0.75rem; padding:0.75rem; background:rgba(0,0,0,0.02); border-radius:8px; font-size:0.85rem; border-left:3px solid var(--accent-secondary); color:var(--text-secondary);">
                         <span style="color:var(--accent-secondary); font-weight:600;">🤖 AI Reasoning:</span> ${result.reasoning}
                      </div>` : '';
 
                 // Color based on score
                 let scoreColor = '#64748b';
                 if (result.relevance_score) {
-                    if (result.relevance_score > 0.8) scoreColor = '#22c55e';
-                    else if (result.relevance_score > 0.6) scoreColor = '#f59e0b';
+                    if (result.relevance_score > 0.8) scoreColor = '#16a34a';
+                    else if (result.relevance_score > 0.6) scoreColor = '#d97706';
                 }
 
                 html += `
                     <div class="result-card found">
                         <div class="result-header">
                             <span class="result-code">${result.code}</span>
-                            <div class="status-badge" style="background: rgba(255,255,255,0.1); color: ${scoreColor}; border: 1px solid ${scoreColor};">
+                            <div class="status-badge" style="background: rgba(0,0,0,0.05); color: ${scoreColor}; border: 1px solid ${scoreColor};">
                                 Match: ${score}
                             </div>
                         </div>
