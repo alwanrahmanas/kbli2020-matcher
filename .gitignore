@@ -19,7 +19,7 @@ __pycache__/
 temp/
 output/
 *.pkl
-*.pdf
+
 
 # IDE / Editor
 .vscode/
