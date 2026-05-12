@@ -110,7 +110,7 @@ async def lifespan(app: FastAPI):
     print("Shutting down...")
 
 app = FastAPI(
-    title="KBLI 2020 Code Lookup",
+    title="KBLI 2025 Code Lookup",
     description="Pattern-matching + AI-Enhanced Hybrid Semantic Search for KBLI codes",
     version="3.0.0",  # Major version bump for Hybrid Search
     lifespan=lifespan
@@ -181,7 +181,7 @@ class LookupResponse(BaseModel):
 async def root():
     return {
         "status": "ok",
-        "service": "KBLI 2020 Code Lookup v2.0",
+        "service": "KBLI 2025 Code Lookup v2.0",
         "total_entries": len(kbli_lookup)
     }
 
@@ -309,8 +309,8 @@ async def expand_query_with_ai(query: str) -> dict:
     if not openai_client:
         return {"expanded": query, "keywords": [query], "ai_used": False}
 
-    system_prompt = """ROLE: Anda adalah Ahli Klasifikasi Statistik BPS (Badan Pusat Statistik) khusus KBLI 2020.
-TUGAS: Terjemahkan query informal user menjadi KATA KUNCI TEKNIS KBLI 2020 yang presisi.
+    system_prompt = """ROLE: Anda adalah Ahli Klasifikasi Statistik BPS (Badan Pusat Statistik) khusus KBLI 2025.
+TUGAS: Terjemahkan query informal user menjadi KATA KUNCI TEKNIS KBLI 2025 yang presisi.
 
 PRINSIP DASAR KBLI (Metode Top-Down & Cakupan):
 1. Tentukan Aktivitas Utama (Principal Activity) berdasarkan Nilai Tambah terbesar (sumber penghasilan utama).

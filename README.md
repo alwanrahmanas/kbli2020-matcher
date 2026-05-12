@@ -1,4 +1,4 @@
-# KBLI 2020 Code Lookup v3.0 (Hybrid AI Edition)
+# KBLI 2025 Code Lookup v3.0 (Hybrid AI Edition)
 
 ## 🎯 Problem Statement
 Mencari kode KBLI yang tepat seringkali sulit karena bahasa di dokumen resmi (baku) berbeda dengan bahasa sehari-hari (informal).

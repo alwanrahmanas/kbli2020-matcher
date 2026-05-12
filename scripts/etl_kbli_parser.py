@@ -13,8 +13,8 @@ from dataclasses import dataclass, asdict
 import time
 
 # Configuration
-PDF_PATH = Path(r"c:\Users\US3R\OneDrive\Dokumen\Kerja\2026\Distribusi\SBR\kbli2020\KBLI_2020_1659511143.pdf")
-OUTPUT_PATH = Path(r"c:\Users\US3R\OneDrive\Dokumen\Kerja\2026\Distribusi\SBR\kbli2020\kbli_parsed_fast.json")
+PDF_PATH = Path(r"c:\Users\Acer\Downloads\kbbi-writer\kbli2020-matcher\klasifikasi-baku-lapangan-usaha-indonesia--kbli--2025-.pdf")
+OUTPUT_PATH = Path(r"c:\Users\Acer\Downloads\kbbi-writer\kbli2020-matcher\kbli_parsed_fast.json")
 
 # Regex patterns (Sama, tapi di-compile sekali di luar)
 PATTERNS = {
