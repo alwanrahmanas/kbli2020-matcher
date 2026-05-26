@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.bat
+explore_data.py
+test_lookup.py
+etl_kbli_parser.py
+plan.md
+README.md
+*.xlsx
+*.pdf
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
