@@ -149,8 +149,9 @@ class LocalVectorStore:
     EMBEDDING_DIM = 1536
     CACHE_FILE = "kbli_embeddings_cache.pkl"
     
-    def __init__(self, openai_client: AsyncOpenAI):
+    def __init__(self, openai_client: AsyncOpenAI, cache_file: str = None):
         self.client = openai_client
+        self.cache_file = cache_file or self.CACHE_FILE
         self.embeddings: np.ndarray = None  # Shape: (n_docs, embedding_dim)
         self.documents: list[dict] = []
         self.is_ready = False
@@ -183,7 +184,7 @@ class LocalVectorStore:
     
     def _get_cache_path(self, base_path: Path) -> Path:
         """Get path to embeddings cache file"""
-        return base_path / self.CACHE_FILE
+        return base_path / self.cache_file
     
     def _load_cache(self, cache_path: Path) -> bool:
         """Try to load embeddings from cache"""

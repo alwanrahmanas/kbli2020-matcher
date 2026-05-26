@@ -8,6 +8,7 @@ import json
 import re
 import os
 import sys
+import asyncio
 from pathlib import Path
 from typing import Optional
 from io import BytesIO
@@ -31,9 +32,9 @@ for stream in (sys.stdout, sys.stderr):
 
 # Import Hybrid Search Engine
 try:
-    from backend.hybrid_search import HybridSearchEngine
+    from backend.hybrid_search import BM25, HybridSearchEngine, LocalVectorStore, reciprocal_rank_fusion
 except ImportError:
-    from hybrid_search import HybridSearchEngine
+    from hybrid_search import BM25, HybridSearchEngine, LocalVectorStore, reciprocal_rank_fusion
 
 # Load environment variables
 load_dotenv()
@@ -59,11 +60,14 @@ kbli_lookup: dict[str, dict] = {}
 kbli_raw_data: list[dict] = []  # Raw data for hybrid search
 kbji_lookup: dict[str, dict] = {}
 kbji_raw_data: list[dict] = []
+kbji_bm25: BM25 = None
+kbji_vector_store: LocalVectorStore = None
+kbji_hybrid_ready = False
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load KBLI data into memory and initialize Hybrid Search Engine"""
-    global kbli_lookup, kbli_raw_data, kbji_lookup, kbji_raw_data, hybrid_search_engine, async_openai_client
+    global kbli_lookup, kbli_raw_data, kbji_lookup, kbji_raw_data, kbji_bm25, kbji_vector_store, kbji_hybrid_ready, hybrid_search_engine, async_openai_client
     
     json_path = Path(__file__).parent.parent / "kbli_parsed_fast.json"
     if not json_path.exists():
@@ -108,7 +112,7 @@ async def lifespan(app: FastAPI):
         for entry in kbji_raw_data:
             code = str(entry.get("kode_kbji", "")).strip()
             judul = str(entry.get("judul", "")).strip()
-            if code and len(judul) > 5 and kbji_regex.match(code):
+            if code and code not in kbji_lookup and len(judul) > 5 and kbji_regex.match(code):
                 kbji_lookup[code] = entry
                 valid_kbji.append(entry)
                 
@@ -132,9 +136,30 @@ async def lifespan(app: FastAPI):
             await hybrid_search_engine.initialize(kbli_raw_data, cache_dir=cache_dir)
             
             print("✅ Hybrid Search Engine initialized!")
+
+            if kbji_raw_data:
+                print("🔨 Building KBJI BM25 index...")
+                kbji_bm25 = BM25()
+                kbji_bm25.fit(kbji_raw_data, text_fields=["judul", "deskripsi"])
+
+                print("🔨 Building KBJI Vector Store...")
+                kbji_vector_store = LocalVectorStore(
+                    async_openai_client,
+                    cache_file="kbji_embeddings_cache.pkl"
+                )
+                await kbji_vector_store.build_index(
+                    kbji_raw_data,
+                    text_fields=["judul", "deskripsi"],
+                    cache_dir=cache_dir
+                )
+                kbji_hybrid_ready = True
+                print("✅ KBJI Hybrid Search Engine initialized!")
         except Exception as e:
             print(f"⚠️ Hybrid Search initialization failed: {e}")
             hybrid_search_engine = None
+            kbji_bm25 = None
+            kbji_vector_store = None
+            kbji_hybrid_ready = False
     else:
         print("⚠️ No OPENAI_API_KEY - Hybrid Search disabled")
 
@@ -217,12 +242,32 @@ LOCAL_QUERY_EXPANSIONS = [
     (("warung kelontong", "toko kelontong", "warung madura"), ["47111", "perdagangan eceran", "berbagai macam barang", "kelontong"]),
 ]
 
+KBJI_QUERY_EXPANSIONS = [
+    (
+        ("satpol pp", "polisi pamong praja", "satuan polisi pamong praja"),
+        ["5414", "penjaga keamanan", "petugas patroli keamanan", "ketertiban", "patroli", "penertiban", "pengamanan"],
+    ),
+]
+
 def expand_local_keywords(query: str) -> list[str]:
     """Expand common informal business terms into KBLI-friendly keywords."""
     query_lower = str(query).lower()
     keywords = _tokenize_text(query)
 
     for triggers, expansions in LOCAL_QUERY_EXPANSIONS:
+        if any(trigger in query_lower for trigger in triggers):
+            for keyword in expansions:
+                if keyword not in keywords:
+                    keywords.append(keyword)
+
+    return keywords
+
+def expand_kbji_keywords(query: str) -> list[str]:
+    """Expand informal job terms into KBJI-friendly occupation keywords."""
+    query_lower = str(query).lower()
+    keywords = _tokenize_text(query)
+
+    for triggers, expansions in KBJI_QUERY_EXPANSIONS:
         if any(trigger in query_lower for trigger in triggers):
             for keyword in expansions:
                 if keyword not in keywords:
@@ -284,6 +329,48 @@ def lookup_kbji_code(code: str) -> dict:
         "level": "",
     })
 
+def get_manual_kbji_classifications(query: str) -> list[dict]:
+    """Curated KBJI results for terms that are not explicit KBJI titles."""
+    query_lower = str(query).lower()
+
+    if any(term in query_lower for term in ("satpol pp", "polisi pamong praja", "satuan polisi pamong praja")):
+        entry = lookup_kbji_code("5414")
+        return [{
+            "code": entry.get("kode_kbji", "5414"),
+            "kode_kbji": entry.get("kode_kbji", "5414"),
+            "judul": entry.get("judul", "Penjaga Keamanan"),
+            "deskripsi": entry.get("deskripsi", "")[:500],
+            "source_page": entry.get("source_page"),
+            "level": entry.get("level", "subgolongan"),
+            "score": 98,
+            "matched_keywords": ["satpol pp", "ketertiban", "patroli", "penertiban", "pengamanan"],
+            "reasoning": (
+                "Satpol PP bukan POLRI/TNI, sehingga tidak tepat dinaikkan ke Bintara POLRI. "
+                "Untuk KBJI, yang diklasifikasikan adalah pekerjaan/jabatan orangnya. Tugas "
+                "lapangan Satpol PP paling dekat dengan fungsi menjaga ketertiban, patroli, "
+                "pengamanan, dan penertiban. Dalam data KBJI lokal, kelompok terdekat adalah "
+                "5414 Penjaga Keamanan."
+            ),
+        }]
+
+    return []
+
+def merge_manual_kbji_results(query: str, results: list[dict], limit: int) -> list[dict]:
+    manual_results = get_manual_kbji_classifications(query)
+    if not manual_results:
+        return results[:limit]
+
+    merged = []
+    seen_codes = set()
+    for result in manual_results + results:
+        code = result.get("kode_kbji") or result.get("code")
+        if code in seen_codes:
+            continue
+        seen_codes.add(code)
+        merged.append(result)
+
+    return merged[:limit]
+
 def build_kbji_reasoning(query: str, result: dict, matched_keywords: list[str] | None = None) -> str:
     keywords = matched_keywords or _tokenize_text(query)
     title = result.get("judul", "")
@@ -301,7 +388,7 @@ def search_kbji_entries(query: str, limit: int = 5) -> list[dict]:
     if not query or not kbji_raw_data:
         return []
 
-    expanded_keywords = expand_local_keywords(query)
+    expanded_keywords = expand_kbji_keywords(query)
     results = []
 
     for entry in kbji_raw_data:
@@ -338,7 +425,7 @@ def search_kbji_entries(query: str, limit: int = 5) -> list[dict]:
         elif query_lower and query_lower in searchable_title:
             score += 500
 
-        if entry.get("level") == "subgolongan":
+        if score > 0 and entry.get("level") == "subgolongan":
             score += 50
 
         if score > 0:
@@ -356,7 +443,51 @@ def search_kbji_entries(query: str, limit: int = 5) -> list[dict]:
             results.append(result)
 
     results.sort(key=lambda x: x["score"], reverse=True)
-    return results[:limit]
+    return merge_manual_kbji_results(query, results, limit)
+
+async def search_kbji_hybrid_candidates(query: str, retrieval_top_k: int = 20) -> dict:
+    """Retrieve KBJI candidates with BM25 keyword search + semantic vector search."""
+    if not kbji_hybrid_ready or not kbji_bm25 or not kbji_vector_store:
+        return {
+            "results": search_kbji_entries(query, retrieval_top_k),
+            "bm25_top": 0,
+            "vector_top": 0,
+            "total_candidates": 0,
+        }
+
+    bm25_task = asyncio.create_task(asyncio.to_thread(kbji_bm25.search, query, retrieval_top_k))
+    vector_task = asyncio.create_task(kbji_vector_store.search(query, retrieval_top_k))
+    bm25_results, vector_results = await asyncio.gather(bm25_task, vector_task)
+
+    fused_ranking = reciprocal_rank_fusion([bm25_results, vector_results], k=60)
+    candidates = []
+    seen_codes = set()
+
+    for doc_idx, rrf_score in fused_ranking[:retrieval_top_k]:
+        entry = kbji_raw_data[doc_idx]
+        code = str(entry.get("kode_kbji", ""))
+        if code in seen_codes:
+            continue
+        seen_codes.add(code)
+        candidates.append({
+            "code": code,
+            "kode_kbji": code,
+            "judul": entry.get("judul", ""),
+            "deskripsi": entry.get("deskripsi", "")[:500],
+            "source_page": entry.get("source_page"),
+            "level": entry.get("level", ""),
+            "score": rrf_score * 1000,
+            "rrf_score": rrf_score,
+            "matched_keywords": [],
+            "reasoning": build_kbji_reasoning(query, entry),
+        })
+
+    return {
+        "results": merge_manual_kbji_results(query, candidates, retrieval_top_k),
+        "bm25_top": len(bm25_results),
+        "vector_top": len(vector_results),
+        "total_candidates": len(fused_ranking),
+    }
 
 def build_local_reasoning(query: str, result: dict, matched_keywords: list[str] | None = None) -> str:
     """
@@ -425,7 +556,9 @@ async def health():
         "status": "healthy",
         "entries_loaded": len(kbli_lookup),
         "kbji_entries_loaded": len(kbji_lookup),
-        "method": "pattern_matching"
+        "method": "pattern_matching",
+        "kbli_hybrid_ready": bool(hybrid_search_engine and hybrid_search_engine.is_ready),
+        "kbji_hybrid_ready": kbji_hybrid_ready
     }
 
 @app.get("/stats")
@@ -771,7 +904,8 @@ Tugas: Evaluasi relevansi setiap kandidat KBJI terhadap query (jabatan/pekerjaan
 ATURAN PENTING:
 1. Fokus pada pekerjaan/jabatan.
 2. Perhatikan konteks informal. Misal "satpol pp" relevan dengan "Polisi pamong praja" atau "kepala wilayah / ketentraman".
-3. Berikan skor (0.0 - 1.0) dan alasan singkat. Hanya sertakan kandidat relevan (relevance > 0.3).
+3. Satpol PP/Polisi Pamong Praja BUKAN POLRI/TNI. Jangan memilih Bintara POLRI, Perwira POLRI, atau jabatan TNI kecuali query eksplisit menyebut POLRI/TNI.
+4. Berikan skor (0.0 - 1.0) dan alasan singkat. Hanya sertakan kandidat relevan (relevance > 0.3).
 
 OUTPUT FORMAT (JSON only, no markdown):
 {
@@ -823,25 +957,61 @@ OUTPUT FORMAT (JSON only, no markdown):
 @app.get("/search/kbji")
 async def kbji_search(q: str, limit: int = 5):
     """
-    Search KBJI occupations using keyword search + LLM Reranking.
+    Search KBJI occupations using hybrid retrieval when available.
     """
     if not q or len(q) < 2:
         return {"query": q, "method": "kbji_local_keyword", "total": 0, "results": []}
 
-    candidates = search_kbji_entries(q, limit=15)
-    
-    if async_openai_client:
+    bm25_top = 0
+    vector_top = 0
+    total_candidates = 0
+
+    if kbji_hybrid_ready:
+        retrieval = await search_kbji_hybrid_candidates(q, retrieval_top_k=20)
+        candidates = retrieval["results"]
+        bm25_top = retrieval["bm25_top"]
+        vector_top = retrieval["vector_top"]
+        total_candidates = retrieval["total_candidates"]
+        base_method = "kbji_hybrid"
+    else:
+        candidates = search_kbji_entries(q, limit=15)
+        base_method = "kbji_local_keyword"
+
+    if get_manual_kbji_classifications(q):
+        results = merge_manual_kbji_results(q, candidates, limit)
+        method = f"{base_method}_curated"
+    elif async_openai_client:
         results = await rerank_kbji_candidates(q, candidates, limit)
-        method = "kbji_llm_reranked"
+        method = f"{base_method}_llm_reranked"
     else:
         results = candidates[:limit]
-        method = "kbji_local_keyword"
+        method = base_method
 
     return {
         "query": q,
         "method": method,
+        "bm25_results": bm25_top,
+        "vector_results": vector_top,
+        "total_candidates_evaluated": total_candidates,
         "total": len(results),
         "results": results,
+    }
+
+@app.get("/search/kbji/status")
+async def kbji_search_status():
+    """Check if KBJI keyword and semantic search components are ready."""
+    return {
+        "status": "ready" if kbji_raw_data else "not_ready",
+        "documents_indexed": len(kbji_raw_data),
+        "bm25_ready": bool(kbji_bm25),
+        "bm25_terms": len(kbji_bm25.idf) if kbji_bm25 else 0,
+        "vector_store_ready": bool(kbji_vector_store and kbji_vector_store.is_ready),
+        "hybrid_ready": kbji_hybrid_ready,
+        "embedding_model": (
+            kbji_vector_store.EMBEDDING_MODEL
+            if kbji_vector_store and kbji_vector_store.is_ready
+            else None
+        ),
     }
 
 @app.get("/autocomplete/smart")
@@ -966,13 +1136,18 @@ async def hybrid_search_status():
     Check if Hybrid Search Engine is available and ready.
     """
     if hybrid_search_engine and hybrid_search_engine.is_ready:
-        return {
+        status = {
             "status": "ready",
             "documents_indexed": len(hybrid_search_engine.documents),
             "bm25_terms": len(hybrid_search_engine.bm25.idf),
             "vector_store_ready": hybrid_search_engine.vector_store.is_ready,
-            "embedding_model": hybrid_search_engine.vector_store.EMBEDDING_MODEL
+            "embedding_model": hybrid_search_engine.vector_store.EMBEDDING_MODEL,
+            "kbji_status": "ready" if kbji_hybrid_ready else "not_ready",
+            "kbji_documents_indexed": len(kbji_raw_data) if kbji_hybrid_ready else 0,
+            "kbji_bm25_terms": len(kbji_bm25.idf) if kbji_bm25 else 0,
+            "kbji_vector_store_ready": bool(kbji_vector_store and kbji_vector_store.is_ready)
         }
+        return status
     else:
         return {
             "status": "not_ready",

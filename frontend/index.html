@@ -1300,6 +1300,10 @@
             let html = `<div class="search-meta">💼 Menampilkan ${data.results.length} hasil KBJI terbaik</div>`;
 
             data.results.forEach(result => {
+                const rawScore = Number(result.score);
+                const displayScore = Number.isFinite(rawScore)
+                    ? (rawScore <= 100 ? rawScore.toFixed(0) : Math.min(95, Math.round(70 + Math.log10(rawScore) * 8)))
+                    : 'N/A';
                 const reasonHtml = result.reasoning ?
                     `<div style="margin-top:0.75rem; padding:0.75rem; background:rgba(0,0,0,0.02); border-radius:8px; font-size:0.85rem; border-left:3px solid var(--accent-secondary); color:var(--text-secondary);">
                         <span style="color:var(--accent-secondary); font-weight:600;">Reasoning:</span> ${result.reasoning}
@@ -1310,7 +1314,7 @@
                         <div class="result-header">
                             <span class="result-code" style="color: #16a34a;">${result.code}</span>
                             <div class="status-badge" style="background: rgba(22,163,74,0.1); color: #16a34a;">
-                                Score: ${result.score}
+                                Score: ${displayScore}
                             </div>
                         </div>
                         <div class="result-title">${result.judul}</div>
