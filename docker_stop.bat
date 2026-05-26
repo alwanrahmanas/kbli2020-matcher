@@ -1,6 +1,6 @@
 @echo off
 echo ========================================
-echo   KBLI 2020 - Stop Docker Containers
+echo   KBLI 2025 - Stop Docker Containers
 echo ========================================
 echo.
 

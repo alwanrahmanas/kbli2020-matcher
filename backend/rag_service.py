@@ -31,7 +31,7 @@ Deskripsi: "{text}"
 Contoh output: ["Jual pulsa", "Jual nasi goreng"]"""
 
         response = await self.client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5.4-mini-2026-03-17",
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
             max_tokens=200
@@ -112,6 +112,7 @@ Rules:
 3. Assign a confidence score (0.0 - 1.0) for EACH code independently.
 4. Explain your reasoning briefly referencing the "Cakupan".
 5. If the context does not contain a suitable match, output "UNMAPPED".
+6. Terms indicating personal occupations like "PNS", "ASN", "PPPK", "Satpol PP" are NOT business activities. If the user input is primarily these professions, output "UNMAPPED" with title "BUKAN KBLI (Bukan Lapangan Usaha)".
 
 Response Format (JSON ONLY, no markdown):
 {
@@ -133,7 +134,7 @@ Konteks KBLI yang tersedia:
 Klasifikasikan deskripsi di atas. Output JSON saja."""
 
         response = await self.client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5.4-mini-2026-03-17",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}

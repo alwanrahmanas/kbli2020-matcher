@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 COPY backend/ /app/backend/
 COPY frontend/ /app/frontend/
 COPY kbli_parsed_fast.json /app/kbli_parsed_fast.json
+COPY kbji_parsed.json /app/kbji_parsed.json
 
 # Expose port
 EXPOSE 8000

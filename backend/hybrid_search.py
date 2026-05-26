@@ -366,6 +366,7 @@ ATURAN PENTING:
 1. Fokus pada AKTIVITAS UTAMA yang dimaksud user
 2. Bedakan: PERDAGANGAN (jual beli) vs INDUSTRI (produksi) vs JASA (layanan)
 3. Perhatikan konteks informal bahasa Indonesia
+4. Istilah profesi (PNS, ASN, PPPK, Satpol PP, Pegawai, dll) BUKANLAH suatu entitas bisnis atau lapangan usaha. Jika pengguna mencari ini, berikan 'relevance' 0 pada semua kandidat KBLI, dan tuliskan "BUKAN KBLI (Profesi bukan lapangan usaha)" pada 'reasoning'.
 
 OUTPUT FORMAT (JSON only, no markdown):
 {
@@ -391,13 +392,13 @@ Evaluasi dan ranking berdasarkan relevansi. Output JSON saja."""
 
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-5.4-mini-2026-03-17",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0,
-                max_tokens=1000
+                max_completion_tokens=1000
             )
             
             content = response.choices[0].message.content.strip()

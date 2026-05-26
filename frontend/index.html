@@ -657,8 +657,56 @@
         </div>
 
         <div class="grid-2" style="margin-top: 2rem;">
-            <!-- Batch Upload -->
+            <!-- Pencarian KBJI -->
             <div class="card">
+                <div class="card-header">
+                    <div class="card-icon" style="background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);">💼</div>
+                    <h2>Pencarian KBJI 2014</h2>
+                </div>
+                <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">Cari klasifikasi jabatan berdasarkan deskripsi pekerjaan</p>
+
+                <div class="input-group">
+                    <label for="kbjiSearchInput">Cari Jabatan (misal: penjahit, manajer...)</label>
+                    <input type="text" id="kbjiSearchInput" placeholder="Contoh: akuntan, perawat..."
+                        onkeyup="handleKbjiEnter(event)" autocomplete="off">
+                </div>
+
+                <div style="display: flex; gap: 1rem;">
+                    <button class="btn btn-primary" id="kbjiSearchBtn" onclick="searchKBJI()" style="background: linear-gradient(135deg, #16a34a 0%, #15803d 100%); box-shadow: 0 6px 24px rgba(22, 163, 74, 0.35);">
+                        <span>💼</span> Cari KBJI
+                    </button>
+                    <button class="btn btn-secondary" id="kbjiClearBtn" onclick="clearKbjiSearch()" style="display: none;">
+                        <span>🗑️</span> Clear
+                    </button>
+                </div>
+
+                <div class="result-display" id="kbjiSearchResults">
+                    <!-- Search results will be inserted here -->
+                </div>
+            </div>
+
+            <!-- Lookup KBJI by Code -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon" style="background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);">🔢</div>
+                    <h2>Lookup Kode KBJI</h2>
+                </div>
+                <div class="input-group">
+                    <label for="kbjiCodeInput">Masukkan Kode KBJI</label>
+                    <input type="text" id="kbjiCodeInput" class="with-autocomplete" placeholder="Contoh: 1113.03, 5412..."
+                        maxlength="10" onkeyup="if(event.key==='Enter') lookupKbjiCode()" autocomplete="off">
+                </div>
+                <button class="btn btn-primary" id="kbjiLookupBtn" onclick="lookupKbjiCode()" style="background: linear-gradient(135deg, #16a34a 0%, #15803d 100%); box-shadow: 0 6px 24px rgba(22, 163, 74, 0.35);">
+                    <span>🔍</span> Cari Klasifikasi KBJI
+                </button>
+                <div class="result-display" id="kbjiSingleResult">
+                </div>
+            </div>
+        </div>
+
+        <div class="grid-2" style="margin-top: 2rem;">
+            <!-- Batch Upload -->
+            <div class="card" style="grid-column: 1 / -1; max-width: 800px; margin: 0 auto; width: 100%;">
                 <div class="card-header">
                     <div class="card-icon">📁</div>
                     <h2>Batch Lookup dari Excel</h2>
@@ -990,9 +1038,72 @@
             const file = event.target.files[0];
             if (!file) return;
 
-            uploadedFile = file;
-            document.getElementById('fileName').textContent = file.name;
+            if (file) {
+                document.getElementById('fileName').textContent = file.name;
+                readExcelColumns(file);
+            }
+        }
+        
+        async function lookupKbjiCode() {
+            const code = document.getElementById('kbjiCodeInput').value.trim();
+            if (!code) {
+                alert('Masukkan kode KBJI!');
+                return;
+            }
 
+            const btn = document.getElementById('kbjiLookupBtn');
+            const resultDiv = document.getElementById('kbjiSingleResult');
+
+            btn.disabled = true;
+            btn.innerHTML = '<span>⏳</span> Mencari...';
+
+            try {
+                const response = await fetch(`${API_BASE}/lookup/kbji/${encodeURIComponent(code)}`);
+                if (!response.ok) throw new Error('API Error');
+
+                const data = await response.json();
+                renderKbjiSingleResult(data, resultDiv);
+                resultDiv.classList.add('active');
+
+            } catch (error) {
+                alert('Error: ' + error.message + '\n\nPastikan backend berjalan di localhost:8000');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<span>🔍</span> Cari Klasifikasi KBJI';
+            }
+        }
+
+        function renderKbjiSingleResult(data, container) {
+            const statusClass = data.found ? 'found' : 'not-found';
+            const statusBadge = data.found ?
+                '<span class="status-badge status-found" style="background: rgba(34, 197, 94, 0.15); color: var(--success);">✓ Ditemukan</span>' :
+                '<span class="status-badge status-not-found" style="background: rgba(239, 68, 68, 0.15); color: var(--danger);">✗ Tidak Ditemukan</span>';
+
+            let html = `
+                <div class="result-card ${statusClass}">
+                    <div class="result-header">
+                        <span class="result-code">${data.code}</span>
+                        ${statusBadge}
+                    </div>
+            `;
+
+            if (data.found) {
+                html += `
+                    <div class="result-title">${data.judul || 'N/A'}</div>
+                    ${data.level ? `<div class="result-hierarki">📍 Level: ${data.level}</div>` : ''}
+                    ${data.deskripsi ? `<div class="result-cakupan" style="margin-top: 1rem;"><strong>Deskripsi:</strong><br>${data.deskripsi}</div>` : ''}
+                </div>`;
+            } else {
+                html += `
+                    <div style="color: var(--text-secondary); margin-top: 1rem;">
+                        Kode KBJI <strong>${data.code}</strong> tidak ditemukan di database.
+                    </div>
+                </div>`;
+            }
+            container.innerHTML = html;
+        }
+
+        function readExcelColumns(file) {
             const formData = new FormData();
             formData.append('file', file);
 
@@ -1131,6 +1242,86 @@
                 handleFileSelect({ target: { files } });
             }
         });
+
+        function handleKbjiEnter(event) {
+            if (event.key === 'Enter') {
+                searchKBJI();
+            }
+        }
+
+        function clearKbjiSearch() {
+            document.getElementById('kbjiSearchInput').value = '';
+            document.getElementById('kbjiSearchResults').innerHTML = '';
+            document.getElementById('kbjiSearchResults').classList.remove('active');
+            document.getElementById('kbjiClearBtn').style.display = 'none';
+            document.getElementById('kbjiSearchInput').focus();
+        }
+
+        async function searchKBJI() {
+            const query = document.getElementById('kbjiSearchInput').value.trim();
+            if (!query || query.length < 2) {
+                alert('Masukkan minimal 2 karakter untuk pencarian!');
+                return;
+            }
+
+            const btn = document.getElementById('kbjiSearchBtn');
+            const clearBtn = document.getElementById('kbjiClearBtn');
+            const resultsDiv = document.getElementById('kbjiSearchResults');
+
+            btn.disabled = true;
+            btn.innerHTML = '<span>🚀</span> Mencari...';
+
+            if (clearBtn) clearBtn.style.display = 'none';
+
+            try {
+                const response = await fetch(`${API_BASE}/search/kbji?q=${encodeURIComponent(query)}&limit=5`);
+                if (!response.ok) throw new Error('Failed to fetch from backend');
+
+                const data = await response.json();
+                renderKbjiResults(data, resultsDiv);
+                resultsDiv.classList.add('active');
+
+            } catch (error) {
+                console.error("KBJI Search Error:", error);
+                alert(`Error: ${error.message}\n\nPastikan backend berjalan.`);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<span>💼</span> Cari KBJI';
+                if (clearBtn) clearBtn.style.display = 'inline-flex';
+            }
+        }
+
+        function renderKbjiResults(data, container) {
+            if (!data.results || data.results.length === 0) {
+                container.innerHTML = `<div class="search-meta">Tidak ada hasil KBJI yang relevan untuk "${data.query}"</div>`;
+                return;
+            }
+
+            let html = `<div class="search-meta">💼 Menampilkan ${data.results.length} hasil KBJI terbaik</div>`;
+
+            data.results.forEach(result => {
+                const reasonHtml = result.reasoning ?
+                    `<div style="margin-top:0.75rem; padding:0.75rem; background:rgba(0,0,0,0.02); border-radius:8px; font-size:0.85rem; border-left:3px solid var(--accent-secondary); color:var(--text-secondary);">
+                        <span style="color:var(--accent-secondary); font-weight:600;">Reasoning:</span> ${result.reasoning}
+                     </div>` : '';
+
+                html += `
+                    <div class="result-card found" style="border-left-color: #16a34a;">
+                        <div class="result-header">
+                            <span class="result-code" style="color: #16a34a;">${result.code}</span>
+                            <div class="status-badge" style="background: rgba(22,163,74,0.1); color: #16a34a;">
+                                Score: ${result.score}
+                            </div>
+                        </div>
+                        <div class="result-title">${result.judul}</div>
+                        ${result.deskripsi ? '<div class="result-cakupan" style="margin-top: 0.5rem; font-size: 0.9rem;"><strong>Deskripsi:</strong> ' + result.deskripsi.replace(/\\n/g, '<br>') + '</div>' : ''}
+                        ${reasonHtml}
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
 
         // Close autocomplete when clicking outside
         document.addEventListener('click', (e) => {

@@ -1,6 +1,6 @@
 @echo off
 echo ========================================
-echo   KBLI 2020 - Docker Build and Run
+echo   KBLI 2025 - Docker Build and Run
 echo ========================================
 echo.
 

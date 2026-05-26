@@ -101,11 +101,20 @@ async def lifespan(app: FastAPI):
     if kbji_path.exists():
         with open(kbji_path, 'r', encoding='utf-8') as f:
             kbji_raw_data = json.load(f)
+        import re
+        kbji_regex = re.compile(r'^\d{1,4}(\.\d{2})?$')
+        valid_kbji = []
 
         for entry in kbji_raw_data:
             code = str(entry.get("kode_kbji", "")).strip()
-            if code:
+            judul = str(entry.get("judul", "")).strip()
+            if code and len(judul) > 5 and kbji_regex.match(code):
                 kbji_lookup[code] = entry
+                valid_kbji.append(entry)
+                
+        # Replace the raw data with cleaned data
+        kbji_raw_data.clear()
+        kbji_raw_data.extend(valid_kbji)
 
         print(f"✅ Loaded {len(kbji_lookup)} KBJI entries into lookup dictionary")
     else:
@@ -560,6 +569,9 @@ ATURAN KHUSUS (WAJIB PATUH):
    - "Konveksi" (membuat baju) -> "INDUSTRI PAKAIAN JADI" (bukan penjahit).
    - "Permak Levis" / "Penjahit" -> "REPARASI", "PAKAIAN", "VERMAK".
    - "Bengkel Motor" -> "REPARASI", "PERAWATAN", "SEPEDA MOTOR".
+5. PROFESI BUKAN LAPANGAN USAHA (PNS, ASN, PPPK, Satpol PP, dll):
+   - KBLI adalah klasifikasi usaha, bukan pekerjaan.
+   - Jika input adalah profesi perorangan seperti "PNS", "ASN", "PPPK", "Satpol PP", "Pegawai Negeri", wajib output: BUKAN KBLI.
 
 FORMAT OUTPUT:
 Hanya 2-6 kata kunci paling relevan, dipisahkan koma, lowercase. Urutkan dari yang paling spesifik/penting.
@@ -584,7 +596,7 @@ Output: 494, angkutan jalan, pindahan
 
     try:
         response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5.4-mini-2026-03-17",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Input: \"{query}\""}
@@ -743,19 +755,91 @@ async def smart_search(q: str, limit: int = 10):
         "results": results
     }
 
+async def rerank_kbji_candidates(query: str, candidates: list[dict], top_k: int = 5) -> list[dict]:
+    """Re-rank KBJI candidates using LLM."""
+    if not candidates or not async_openai_client:
+        return candidates[:top_k]
+    
+    candidates = candidates[:15]
+    candidate_str = "\n".join([
+        f"{i+1}. KODE: {c.get('kode_kbji', '')} | JUDUL: {c.get('judul', '')[:100]} | DESKRIPSI: {c.get('deskripsi', '')[:200]}"
+        for i, c in enumerate(candidates)
+    ])
+    
+    system_prompt = """Anda adalah ahli klasifikasi KBJI (Klasifikasi Baku Jabatan Indonesia).
+Tugas: Evaluasi relevansi setiap kandidat KBJI terhadap query (jabatan/pekerjaan) pengguna.
+ATURAN PENTING:
+1. Fokus pada pekerjaan/jabatan.
+2. Perhatikan konteks informal. Misal "satpol pp" relevan dengan "Polisi pamong praja" atau "kepala wilayah / ketentraman".
+3. Berikan skor (0.0 - 1.0) dan alasan singkat. Hanya sertakan kandidat relevan (relevance > 0.3).
+
+OUTPUT FORMAT (JSON only, no markdown):
+{
+  "rankings": [
+    {
+      "rank": 1,
+      "index": <nomor kandidat 1-based>,
+      "relevance": <0.0-1.0>,
+      "reason": "<alasan>"
+    }
+  ]
+}"""
+
+    user_prompt = f'Query: "{query}"\n\nKandidat KBJI:\n{candidate_str}\n\nOutput JSON saja.'
+    
+    try:
+        response = await async_openai_client.chat.completions.create(
+            model="gpt-5.4-mini-2026-03-17",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0,
+            max_completion_tokens=1000
+        )
+        content = response.choices[0].message.content.strip()
+        import re
+        if "```" in content:
+            match = re.search(r'```(?:json)?\s*(.*?)```', content, re.DOTALL)
+            if match:
+                content = match.group(1).strip()
+        import json
+        result = json.loads(content)
+        rankings = result.get("rankings", [])
+        
+        reranked = []
+        for r in rankings[:top_k]:
+            idx = r.get("index", 1) - 1
+            if 0 <= idx < len(candidates):
+                candidate = candidates[idx].copy()
+                candidate["score"] = r.get("relevance", 0.0) * 100
+                candidate["reasoning"] = f"Diklasifikasikan ke KBJI {candidate['kode_kbji']} karena {r.get('reason', '')}"
+                reranked.append(candidate)
+        return reranked if reranked else candidates[:top_k]
+    except Exception as e:
+        print(f"KBJI Reranking error: {e}")
+        return candidates[:top_k]
+
 @app.get("/search/kbji")
 async def kbji_search(q: str, limit: int = 5):
     """
-    Search KBJI occupations from parsed KBJI 2014 PDF data.
-    Uses local keyword scoring; can be upgraded to vector search later.
+    Search KBJI occupations using keyword search + LLM Reranking.
     """
     if not q or len(q) < 2:
         return {"query": q, "method": "kbji_local_keyword", "total": 0, "results": []}
 
-    results = search_kbji_entries(q, limit)
+    candidates = search_kbji_entries(q, limit=15)
+    
+    if async_openai_client:
+        results = await rerank_kbji_candidates(q, candidates, limit)
+        method = "kbji_llm_reranked"
+    else:
+        results = candidates[:limit]
+        method = "kbji_local_keyword"
+
     return {
         "query": q,
-        "method": "kbji_local_keyword",
+        "method": method,
         "total": len(results),
         "results": results,
     }
@@ -927,6 +1011,28 @@ async def lookup_code_get(code: str):
             if result["status"] == "found"
             else "Kode tidak ditemukan di database lokal; pastikan kode 5 digit benar."
         )
+    }
+
+@app.get("/lookup/kbji/{code}")
+async def lookup_kbji_code_get(code: str):
+    """Lookup a single KBJI code via GET"""
+    if code in kbji_lookup:
+        entry = kbji_lookup[code]
+        return {
+            "code": code,
+            "found": True,
+            "judul": entry.get("judul", ""),
+            "level": entry.get("level", ""),
+            "deskripsi": entry.get("deskripsi", ""),
+            "reasoning": f"Kode KBJI {code} ditemukan di database KBJI."
+        }
+    return {
+        "code": code,
+        "found": False,
+        "judul": "",
+        "level": "",
+        "deskripsi": "",
+        "reasoning": "Kode KBJI tidak ditemukan di database lokal."
     }
 
 @app.post("/upload-preview")
