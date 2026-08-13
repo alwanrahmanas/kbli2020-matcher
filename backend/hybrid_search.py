@@ -9,12 +9,15 @@ Architecture:
 """
 
 import asyncio
+import copy
+import hashlib
 import json
 import math
 import os
 import pickle
 import re
-from collections import Counter
+import time
+from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Optional
 import numpy as np
@@ -41,6 +44,7 @@ class BM25:
         self.doc_len = []  # Length of each document
         self.documents = []  # Tokenized documents
         self.original_docs = []  # Original document dicts
+        self.postings = {}  # term -> [(doc_index, term_frequency)]
     
     def _tokenize(self, text: str) -> list[str]:
         """Tokenize text into words, Indonesian-aware"""
@@ -81,10 +85,12 @@ class BM25:
         
         # Calculate document frequencies
         self.doc_freqs = {}
-        for tokens in self.documents:
-            unique_tokens = set(tokens)
-            for token in unique_tokens:
+        self.postings = {}
+        for doc_idx, tokens in enumerate(self.documents):
+            term_freqs = Counter(tokens)
+            for token, frequency in term_freqs.items():
                 self.doc_freqs[token] = self.doc_freqs.get(token, 0) + 1
+                self.postings.setdefault(token, []).append((doc_idx, frequency))
         
         # Calculate IDF for each term
         self.idf = {}
@@ -103,11 +109,27 @@ class BM25:
         if not query_tokens:
             return []
         
-        scores = []
-        for idx, doc_tokens in enumerate(self.documents):
-            score = self._score_document(query_tokens, doc_tokens, self.doc_len[idx])
-            if score > 0:
-                scores.append((idx, score))
+        if self.avgdl <= 0 or top_k <= 0:
+            return []
+
+        # Score only documents containing a query term. The previous implementation
+        # rebuilt a Counter for every document on every query (O(corpus size)).
+        scores_by_doc = {}
+        for term, query_frequency in Counter(query_tokens).items():
+            idf = self.idf.get(term)
+            if idf is None:
+                continue
+            for doc_idx, term_frequency in self.postings.get(term, ()):
+                doc_len = self.doc_len[doc_idx]
+                numerator = term_frequency * (self.k1 + 1)
+                denominator = term_frequency + self.k1 * (
+                    1 - self.b + self.b * (doc_len / self.avgdl)
+                )
+                scores_by_doc[doc_idx] = scores_by_doc.get(doc_idx, 0.0) + (
+                    query_frequency * idf * (numerator / denominator)
+                )
+
+        scores = list(scores_by_doc.items())
         
         # Sort by score descending
         scores.sort(key=lambda x: x[1], reverse=True)
@@ -155,6 +177,9 @@ class LocalVectorStore:
         self.embeddings: np.ndarray = None  # Shape: (n_docs, embedding_dim)
         self.documents: list[dict] = []
         self.is_ready = False
+        self._query_cache: OrderedDict[str, np.ndarray] = OrderedDict()
+        self._query_cache_size = 256
+        self._embedding_inflight: dict[str, asyncio.Task] = {}
     
     async def _get_embedding(self, text: str) -> np.ndarray:
         """Get embedding for a single text"""
@@ -163,6 +188,31 @@ class LocalVectorStore:
             input=text
         )
         return np.array(response.data[0].embedding, dtype=np.float32)
+
+    async def _get_query_embedding(self, text: str) -> np.ndarray:
+        """Return a cached query embedding and coalesce concurrent duplicates."""
+        key = " ".join(text.lower().split())
+        cached = self._query_cache.pop(key, None)
+        if cached is not None:
+            self._query_cache[key] = cached
+            return cached
+
+        task = self._embedding_inflight.get(key)
+        if task is None:
+            task = asyncio.create_task(self._get_embedding(text))
+            self._embedding_inflight[key] = task
+
+        try:
+            embedding = await asyncio.shield(task)
+        finally:
+            if task.done() and self._embedding_inflight.get(key) is task:
+                self._embedding_inflight.pop(key, None)
+
+        self._query_cache[key] = embedding
+        self._query_cache.move_to_end(key)
+        while len(self._query_cache) > self._query_cache_size:
+            self._query_cache.popitem(last=False)
+        return embedding
     
     async def _get_embeddings_batch(self, texts: list[str], batch_size: int = 100) -> list[np.ndarray]:
         """Get embeddings for multiple texts in batches"""
@@ -178,7 +228,7 @@ class LocalVectorStore:
             all_embeddings.extend(batch_embeddings)
             
             # Progress logging
-            print(f"  📊 Embedded {min(i + batch_size, len(texts))}/{len(texts)} documents...")
+            print(f"  ðŸ“Š Embedded {min(i + batch_size, len(texts))}/{len(texts)} documents...")
         
         return all_embeddings
     
@@ -186,32 +236,56 @@ class LocalVectorStore:
         """Get path to embeddings cache file"""
         return base_path / self.cache_file
     
-    def _load_cache(self, cache_path: Path) -> bool:
+    @staticmethod
+    def _documents_fingerprint(documents: list[dict]) -> str:
+        digest = hashlib.sha256()
+        for doc in documents:
+            payload = json.dumps(doc, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            digest.update(payload.encode("utf-8"))
+            digest.update(b"\n")
+        return digest.hexdigest()
+
+    def _load_cache(self, cache_path: Path, expected_fingerprint: str) -> bool:
         """Try to load embeddings from cache"""
         if cache_path.exists():
             try:
                 with open(cache_path, 'rb') as f:
                     cached = pickle.load(f)
-                    self.embeddings = cached['embeddings']
-                    self.documents = cached['documents']
+                    cached_documents = cached['documents']
+                    cached_fingerprint = cached.get('fingerprint') or self._documents_fingerprint(cached_documents)
+                    cached_model = cached.get('model', self.EMBEDDING_MODEL)
+                    cached_embeddings = cached['embeddings']
+                    if (
+                        cached_fingerprint != expected_fingerprint
+                        or cached_model != self.EMBEDDING_MODEL
+                        or len(cached_embeddings) != len(cached_documents)
+                    ):
+                        print("âš ï¸ Embedding cache is stale, rebuilding...")
+                        return False
+                    self.embeddings = cached_embeddings
+                    self.documents = cached_documents
                     self.is_ready = True
-                    print(f"✅ Loaded {len(self.documents)} embeddings from cache")
+                    print(f"âœ… Loaded {len(self.documents)} embeddings from cache")
                     return True
             except Exception as e:
-                print(f"⚠️ Cache load failed: {e}")
+                print(f"âš ï¸ Cache load failed: {e}")
         return False
     
-    def _save_cache(self, cache_path: Path):
+    def _save_cache(self, cache_path: Path, fingerprint: str):
         """Save embeddings to cache"""
         try:
-            with open(cache_path, 'wb') as f:
+            temp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+            with open(temp_path, 'wb') as f:
                 pickle.dump({
                     'embeddings': self.embeddings,
-                    'documents': self.documents
+                    'documents': self.documents,
+                    'fingerprint': fingerprint,
+                    'model': self.EMBEDDING_MODEL,
                 }, f)
-            print(f"✅ Saved embeddings cache to {cache_path}")
+            temp_path.replace(cache_path)
+            print(f"âœ… Saved embeddings cache to {cache_path}")
         except Exception as e:
-            print(f"⚠️ Cache save failed: {e}")
+            print(f"âš ï¸ Cache save failed: {e}")
     
     async def build_index(self, documents: list[dict], text_fields: list[str] = None, 
                           cache_dir: Path = None, force_rebuild: bool = False):
@@ -226,17 +300,16 @@ class LocalVectorStore:
         """
         if text_fields is None:
             text_fields = ["judul", "cakupan"]
+
+        fingerprint = self._documents_fingerprint(documents)
         
         # Try loading from cache first
         if cache_dir and not force_rebuild:
             cache_path = self._get_cache_path(cache_dir)
-            if self._load_cache(cache_path):
-                # Verify cache matches documents
-                if len(self.documents) == len(documents):
-                    return
-                print("⚠️ Cache size mismatch, rebuilding...")
+            if self._load_cache(cache_path, fingerprint):
+                return
         
-        print(f"🔨 Building vector index for {len(documents)} documents...")
+        print(f"ðŸ”¨ Building vector index for {len(documents)} documents...")
         self.documents = documents
         
         # Prepare texts for embedding
@@ -246,6 +319,11 @@ class LocalVectorStore:
             texts.append(combined)
         
         # Get embeddings in batches
+        if not texts:
+            self.embeddings = np.empty((0, self.EMBEDDING_DIM), dtype=np.float32)
+            self.is_ready = True
+            return
+
         embedding_list = await self._get_embeddings_batch(texts)
         self.embeddings = np.vstack(embedding_list)
         
@@ -254,12 +332,12 @@ class LocalVectorStore:
         self.embeddings = self.embeddings / (norms + 1e-10)
         
         self.is_ready = True
-        print(f"✅ Vector index ready: {self.embeddings.shape}")
+        print(f"âœ… Vector index ready: {self.embeddings.shape}")
         
         # Save to cache
         if cache_dir:
             cache_path = self._get_cache_path(cache_dir)
-            self._save_cache(cache_path)
+            self._save_cache(cache_path, fingerprint)
     
     async def search(self, query: str, top_k: int = 10) -> list[tuple[int, float]]:
         """
@@ -272,14 +350,22 @@ class LocalVectorStore:
             return []
         
         # Get query embedding
-        query_embedding = await self._get_embedding(query)
+        if self.embeddings is None or len(self.embeddings) == 0 or top_k <= 0:
+            return []
+
+        query_embedding = await self._get_query_embedding(query)
         query_embedding = query_embedding / (np.linalg.norm(query_embedding) + 1e-10)
         
         # Cosine similarity (embeddings are normalized)
         similarities = np.dot(self.embeddings, query_embedding)
         
-        # Get top-k indices
-        top_indices = np.argsort(similarities)[::-1][:top_k]
+        # Partition first so top-k does not sort the complete corpus.
+        result_count = min(top_k, len(similarities))
+        if result_count == len(similarities):
+            top_indices = np.argsort(similarities)[::-1]
+        else:
+            candidates = np.argpartition(similarities, -result_count)[-result_count:]
+            top_indices = candidates[np.argsort(similarities[candidates])[::-1]]
         
         results = [(int(idx), float(similarities[idx])) for idx in top_indices]
         return results
@@ -296,7 +382,7 @@ def reciprocal_rank_fusion(
     """
     Combine multiple rankings using Reciprocal Rank Fusion.
     
-    RRF Score = Σ 1/(k + rank_i) for each ranking list
+    RRF Score = Î£ 1/(k + rank_i) for each ranking list
     
     Args:
         rankings: List of ranking lists, each containing (doc_id, score) tuples
@@ -452,6 +538,10 @@ class HybridSearchEngine:
         self.reranker = SemanticReranker(openai_client)
         self.documents: list[dict] = []
         self.is_ready = False
+        self._result_cache: OrderedDict[tuple, tuple[float, dict]] = OrderedDict()
+        self._result_cache_ttl = 300.0
+        self._result_cache_size = 256
+        self._search_inflight: dict[tuple, asyncio.Task] = {}
     
     async def initialize(self, documents: list[dict], cache_dir: Path = None):
         """
@@ -465,15 +555,15 @@ class HybridSearchEngine:
         ]
         
         self.documents = valid_docs
-        print(f"📚 Initializing Hybrid Search with {len(valid_docs)} valid KBLI entries...")
+        print(f"ðŸ“š Initializing Hybrid Search with {len(valid_docs)} valid KBLI entries...")
         
         # Build BM25 index (fast, synchronous)
-        print("🔨 Building BM25 index...")
+        print("ðŸ”¨ Building BM25 index...")
         self.bm25.fit(valid_docs, text_fields=["judul", "hierarki", "cakupan"])
-        print(f"✅ BM25 index ready: {len(self.bm25.idf)} unique terms")
+        print(f"âœ… BM25 index ready: {len(self.bm25.idf)} unique terms")
         
         # Build vector store (async, may use cache)
-        print("🔨 Building Vector Store...")
+        print("ðŸ”¨ Building Vector Store...")
         await self.vector_store.build_index(
             valid_docs, 
             text_fields=["judul", "cakupan"],
@@ -481,7 +571,7 @@ class HybridSearchEngine:
         )
         
         self.is_ready = True
-        print("✅ Hybrid Search Engine ready!")
+        print("âœ… Hybrid Search Engine ready!")
     
     async def search(
         self, 
@@ -504,10 +594,53 @@ class HybridSearchEngine:
         """
         if not self.is_ready:
             return {"error": "Search engine not initialized", "results": []}
+
+        top_k = max(1, min(int(top_k), 20))
+        retrieval_top_k = max(top_k, min(int(retrieval_top_k), 100))
+
+        cache_key = (
+            " ".join(query.lower().split()),
+            int(top_k),
+            bool(use_reranking),
+            int(retrieval_top_k),
+        )
+        now = time.monotonic()
+        cached = self._result_cache.pop(cache_key, None)
+        if cached is not None and now - cached[0] <= self._result_cache_ttl:
+            self._result_cache[cache_key] = cached
+            return copy.deepcopy(cached[1])
+
+        task = self._search_inflight.get(cache_key)
+        if task is None:
+            task = asyncio.create_task(
+                self._search_uncached(query, top_k, use_reranking, retrieval_top_k)
+            )
+            self._search_inflight[cache_key] = task
+
+        try:
+            result = await asyncio.shield(task)
+        finally:
+            if task.done() and self._search_inflight.get(cache_key) is task:
+                self._search_inflight.pop(cache_key, None)
+
+        self._result_cache[cache_key] = (time.monotonic(), copy.deepcopy(result))
+        self._result_cache.move_to_end(cache_key)
+        while len(self._result_cache) > self._result_cache_size:
+            self._result_cache.popitem(last=False)
+        return result
+
+    async def _search_uncached(
+        self,
+        query: str,
+        top_k: int,
+        use_reranking: bool,
+        retrieval_top_k: int,
+    ) -> dict:
+        """Execute retrieval and reranking without consulting the result cache."""
         
         # ====== STAGE 1: Parallel Retrieval ======
         # Run BM25 and Vector search in parallel
-        bm25_task = asyncio.create_task(self._bm25_search(query, retrieval_top_k))
+        bm25_task = asyncio.create_task(asyncio.to_thread(self.bm25.search, query, retrieval_top_k))
         vector_task = asyncio.create_task(self.vector_store.search(query, retrieval_top_k))
         
         bm25_results, vector_results = await asyncio.gather(bm25_task, vector_task)
@@ -546,10 +679,6 @@ class HybridSearchEngine:
             "vector_top": len(vector_results),
             "results": final_results
         }
-    
-    async def _bm25_search(self, query: str, top_k: int) -> list[tuple[int, float]]:
-        """Wrapper for BM25 search (sync but wrapped for gather)"""
-        return self.bm25.search(query, top_k)
     
     async def search_simple(self, query: str, top_k: int = 5) -> list[dict]:
         """
@@ -607,3 +736,4 @@ async def test_hybrid_search():
 
 if __name__ == "__main__":
     asyncio.run(test_hybrid_search())
+
