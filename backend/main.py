@@ -54,11 +54,11 @@ try:
             timeout=OPENAI_TIMEOUT_SECONDS,
             max_retries=2,
         )
-        print("âœ… OpenAI client initialized for smart search")
+        print("✅ OpenAI client initialized for smart search")
     else:
-        print("âš ï¸ No OPENAI_API_KEY found - smart search disabled")
+        print("⚠️ No OPENAI_API_KEY found - smart search disabled")
 except Exception as e:
-    print(f"âš ï¸ OpenAI initialization failed: {e}")
+    print(f"⚠️ OpenAI initialization failed: {e}")
 
 # Global Hybrid Search Engine
 hybrid_search_engine: HybridSearchEngine = None
@@ -107,7 +107,7 @@ async def lifespan(app: FastAPI):
                 padded = code.zfill(5)
                 kbli_lookup[padded] = kbli_lookup[code]
     
-    print(f"âœ… Loaded {len(kbli_lookup)} KBLI entries into lookup dictionary")
+    print(f"✅ Loaded {len(kbli_lookup)} KBLI entries into lookup dictionary")
 
     kbji_path = Path(__file__).parent.parent / "kbji_parsed.json"
     if kbji_path.exists():
@@ -128,9 +128,9 @@ async def lifespan(app: FastAPI):
         kbji_raw_data.clear()
         kbji_raw_data.extend(valid_kbji)
 
-        print(f"âœ… Loaded {len(kbji_lookup)} KBJI entries into lookup dictionary")
+        print(f"✅ Loaded {len(kbji_lookup)} KBJI entries into lookup dictionary")
     else:
-        print("âš ï¸ kbji_parsed.json not found - KBJI search disabled")
+        print("⚠️ kbji_parsed.json not found - KBJI search disabled")
     
     # Initialize Hybrid Search Engine
     api_key = os.getenv("OPENAI_API_KEY")
@@ -148,14 +148,14 @@ async def lifespan(app: FastAPI):
             cache_dir = Path(__file__).parent.parent
             await hybrid_search_engine.initialize(kbli_raw_data, cache_dir=cache_dir)
             
-            print("âœ… Hybrid Search Engine initialized!")
+            print("✅ Hybrid Search Engine initialized!")
 
             if kbji_raw_data:
-                print("ðŸ”¨ Building KBJI BM25 index...")
+                print("🔨 Building KBJI BM25 index...")
                 kbji_bm25 = BM25()
                 kbji_bm25.fit(kbji_raw_data, text_fields=["judul", "deskripsi"])
 
-                print("ðŸ”¨ Building KBJI Vector Store...")
+                print("🔨 Building KBJI Vector Store...")
                 kbji_vector_store = LocalVectorStore(
                     async_openai_client,
                     cache_file="kbji_embeddings_cache.pkl"
@@ -166,15 +166,15 @@ async def lifespan(app: FastAPI):
                     cache_dir=cache_dir
                 )
                 kbji_hybrid_ready = True
-                print("âœ… KBJI Hybrid Search Engine initialized!")
+                print("✅ KBJI Hybrid Search Engine initialized!")
         except Exception as e:
-            print(f"âš ï¸ Hybrid Search initialization failed: {e}")
+            print(f"⚠️ Hybrid Search initialization failed: {e}")
             hybrid_search_engine = None
             kbji_bm25 = None
             kbji_vector_store = None
             kbji_hybrid_ready = False
     else:
-        print("âš ï¸ No OPENAI_API_KEY - Hybrid Search disabled")
+        print("⚠️ No OPENAI_API_KEY - Hybrid Search disabled")
 
     yield
     # Shutdown logic (none needed here but this is where it would go)
@@ -1155,7 +1155,7 @@ async def hybrid_search(
     use_reranking: bool = True
 ):
     """
-    ðŸš€ Hybrid Search - Best accuracy for KBLI classification.
+    🚀 Hybrid Search - Best accuracy for KBLI classification.
     
     Combines multiple retrieval methods:
     1. BM25 keyword matching (handles exact terms)
@@ -1415,7 +1415,7 @@ async def lookup_batch(
                     sheet.cell(row=row_idx, column=result_col_status).font = Font(color="22C55E")
                     found_count += 1
                 else:
-                    sheet.cell(row=row_idx, column=result_col_status, value="âœ— Not Found")
+                    sheet.cell(row=row_idx, column=result_col_status, value="✗ Not Found")
                     sheet.cell(row=row_idx, column=result_col_status).font = Font(color="EF4444")
                     not_found_count += 1
             else:
@@ -1576,4 +1576,3 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
-
