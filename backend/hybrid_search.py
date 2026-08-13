@@ -228,7 +228,7 @@ class LocalVectorStore:
             all_embeddings.extend(batch_embeddings)
             
             # Progress logging
-            print(f"  ðŸ“Š Embedded {min(i + batch_size, len(texts))}/{len(texts)} documents...")
+            print(f"  📊 Embedded {min(i + batch_size, len(texts))}/{len(texts)} documents...")
         
         return all_embeddings
     
@@ -260,15 +260,15 @@ class LocalVectorStore:
                         or cached_model != self.EMBEDDING_MODEL
                         or len(cached_embeddings) != len(cached_documents)
                     ):
-                        print("âš ï¸ Embedding cache is stale, rebuilding...")
+                        print("⚠️ Embedding cache is stale, rebuilding...")
                         return False
                     self.embeddings = cached_embeddings
                     self.documents = cached_documents
                     self.is_ready = True
-                    print(f"âœ… Loaded {len(self.documents)} embeddings from cache")
+                    print(f"✅ Loaded {len(self.documents)} embeddings from cache")
                     return True
             except Exception as e:
-                print(f"âš ï¸ Cache load failed: {e}")
+                print(f"⚠️ Cache load failed: {e}")
         return False
     
     def _save_cache(self, cache_path: Path, fingerprint: str):
@@ -283,9 +283,9 @@ class LocalVectorStore:
                     'model': self.EMBEDDING_MODEL,
                 }, f)
             temp_path.replace(cache_path)
-            print(f"âœ… Saved embeddings cache to {cache_path}")
+            print(f"✅ Saved embeddings cache to {cache_path}")
         except Exception as e:
-            print(f"âš ï¸ Cache save failed: {e}")
+            print(f"⚠️ Cache save failed: {e}")
     
     async def build_index(self, documents: list[dict], text_fields: list[str] = None, 
                           cache_dir: Path = None, force_rebuild: bool = False):
@@ -309,7 +309,7 @@ class LocalVectorStore:
             if self._load_cache(cache_path, fingerprint):
                 return
         
-        print(f"ðŸ”¨ Building vector index for {len(documents)} documents...")
+        print(f"🔨 Building vector index for {len(documents)} documents...")
         self.documents = documents
         
         # Prepare texts for embedding
@@ -332,7 +332,7 @@ class LocalVectorStore:
         self.embeddings = self.embeddings / (norms + 1e-10)
         
         self.is_ready = True
-        print(f"âœ… Vector index ready: {self.embeddings.shape}")
+        print(f"✅ Vector index ready: {self.embeddings.shape}")
         
         # Save to cache
         if cache_dir:
@@ -382,7 +382,7 @@ def reciprocal_rank_fusion(
     """
     Combine multiple rankings using Reciprocal Rank Fusion.
     
-    RRF Score = Î£ 1/(k + rank_i) for each ranking list
+    RRF Score = Σ 1/(k + rank_i) for each ranking list
     
     Args:
         rankings: List of ranking lists, each containing (doc_id, score) tuples
@@ -555,15 +555,15 @@ class HybridSearchEngine:
         ]
         
         self.documents = valid_docs
-        print(f"ðŸ“š Initializing Hybrid Search with {len(valid_docs)} valid KBLI entries...")
+        print(f"📚 Initializing Hybrid Search with {len(valid_docs)} valid KBLI entries...")
         
         # Build BM25 index (fast, synchronous)
-        print("ðŸ”¨ Building BM25 index...")
+        print("🔨 Building BM25 index...")
         self.bm25.fit(valid_docs, text_fields=["judul", "hierarki", "cakupan"])
-        print(f"âœ… BM25 index ready: {len(self.bm25.idf)} unique terms")
+        print(f"✅ BM25 index ready: {len(self.bm25.idf)} unique terms")
         
         # Build vector store (async, may use cache)
-        print("ðŸ”¨ Building Vector Store...")
+        print("🔨 Building Vector Store...")
         await self.vector_store.build_index(
             valid_docs, 
             text_fields=["judul", "cakupan"],
@@ -571,7 +571,7 @@ class HybridSearchEngine:
         )
         
         self.is_ready = True
-        print("âœ… Hybrid Search Engine ready!")
+        print("✅ Hybrid Search Engine ready!")
     
     async def search(
         self, 
@@ -736,4 +736,3 @@ async def test_hybrid_search():
 
 if __name__ == "__main__":
     asyncio.run(test_hybrid_search())
-
