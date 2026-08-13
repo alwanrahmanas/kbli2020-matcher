@@ -9,19 +9,23 @@ import re
 import os
 import sys
 import asyncio
+from uuid import uuid4
 from pathlib import Path
 from typing import Optional
 from io import BytesIO
 from contextlib import asynccontextmanager
+from zipfile import BadZipFile
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils.exceptions import InvalidFileException
 from dotenv import load_dotenv
-from openai import OpenAI, AsyncOpenAI
+from openai import AsyncOpenAI
 
 # Windows consoles often default to cp1252, which can crash on emoji/status logs.
 for stream in (sys.stdout, sys.stderr):
@@ -38,22 +42,26 @@ except ImportError:
 
 # Load environment variables
 load_dotenv()
+OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "30"))
 
-# Initialize OpenAI client
-openai_client = None
+# Initialize the async client once; synchronous SDK calls would block FastAPI's event loop.
+async_openai_client: AsyncOpenAI = None
 try:
     api_key = os.getenv("OPENAI_API_KEY")
     if api_key:
-        openai_client = OpenAI(api_key=api_key)
-        print("✅ OpenAI client initialized for smart search")
+        async_openai_client = AsyncOpenAI(
+            api_key=api_key,
+            timeout=OPENAI_TIMEOUT_SECONDS,
+            max_retries=2,
+        )
+        print("âœ… OpenAI client initialized for smart search")
     else:
-        print("⚠️ No OPENAI_API_KEY found - smart search disabled")
+        print("âš ï¸ No OPENAI_API_KEY found - smart search disabled")
 except Exception as e:
-    print(f"⚠️ OpenAI initialization failed: {e}")
+    print(f"âš ï¸ OpenAI initialization failed: {e}")
 
 # Global Hybrid Search Engine
 hybrid_search_engine: HybridSearchEngine = None
-async_openai_client: AsyncOpenAI = None
 
 # Global lookup dictionary: kode -> info
 kbli_lookup: dict[str, dict] = {}
@@ -99,7 +107,7 @@ async def lifespan(app: FastAPI):
                 padded = code.zfill(5)
                 kbli_lookup[padded] = kbli_lookup[code]
     
-    print(f"✅ Loaded {len(kbli_lookup)} KBLI entries into lookup dictionary")
+    print(f"âœ… Loaded {len(kbli_lookup)} KBLI entries into lookup dictionary")
 
     kbji_path = Path(__file__).parent.parent / "kbji_parsed.json"
     if kbji_path.exists():
@@ -120,29 +128,34 @@ async def lifespan(app: FastAPI):
         kbji_raw_data.clear()
         kbji_raw_data.extend(valid_kbji)
 
-        print(f"✅ Loaded {len(kbji_lookup)} KBJI entries into lookup dictionary")
+        print(f"âœ… Loaded {len(kbji_lookup)} KBJI entries into lookup dictionary")
     else:
-        print("⚠️ kbji_parsed.json not found - KBJI search disabled")
+        print("âš ï¸ kbji_parsed.json not found - KBJI search disabled")
     
     # Initialize Hybrid Search Engine
     api_key = os.getenv("OPENAI_API_KEY")
     if api_key:
         try:
-            async_openai_client = AsyncOpenAI(api_key=api_key)
+            if async_openai_client is None:
+                async_openai_client = AsyncOpenAI(
+                    api_key=api_key,
+                    timeout=OPENAI_TIMEOUT_SECONDS,
+                    max_retries=2,
+                )
             hybrid_search_engine = HybridSearchEngine(async_openai_client)
             
             # Initialize with embeddings cache in parent directory
             cache_dir = Path(__file__).parent.parent
             await hybrid_search_engine.initialize(kbli_raw_data, cache_dir=cache_dir)
             
-            print("✅ Hybrid Search Engine initialized!")
+            print("âœ… Hybrid Search Engine initialized!")
 
             if kbji_raw_data:
-                print("🔨 Building KBJI BM25 index...")
+                print("ðŸ”¨ Building KBJI BM25 index...")
                 kbji_bm25 = BM25()
                 kbji_bm25.fit(kbji_raw_data, text_fields=["judul", "deskripsi"])
 
-                print("🔨 Building KBJI Vector Store...")
+                print("ðŸ”¨ Building KBJI Vector Store...")
                 kbji_vector_store = LocalVectorStore(
                     async_openai_client,
                     cache_file="kbji_embeddings_cache.pkl"
@@ -153,15 +166,15 @@ async def lifespan(app: FastAPI):
                     cache_dir=cache_dir
                 )
                 kbji_hybrid_ready = True
-                print("✅ KBJI Hybrid Search Engine initialized!")
+                print("âœ… KBJI Hybrid Search Engine initialized!")
         except Exception as e:
-            print(f"⚠️ Hybrid Search initialization failed: {e}")
+            print(f"âš ï¸ Hybrid Search initialization failed: {e}")
             hybrid_search_engine = None
             kbji_bm25 = None
             kbji_vector_store = None
             kbji_hybrid_ready = False
     else:
-        print("⚠️ No OPENAI_API_KEY - Hybrid Search disabled")
+        print("âš ï¸ No OPENAI_API_KEY - Hybrid Search disabled")
 
     yield
     # Shutdown logic (none needed here but this is where it would go)
@@ -175,13 +188,57 @@ app = FastAPI(
 )
 
 # CORS for frontend
+default_origins = (
+    "https://kbli2025.alwansegeramutasi.my.id,"
+    "http://localhost:3001,http://127.0.0.1:3001"
+)
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOW_ORIGINS", default_origins).split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=allowed_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Accept", "Content-Type"],
 )
+
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+
+
+async def read_xlsx_upload(file: UploadFile) -> bytes:
+    """Validate an OOXML workbook before loading it fully into memory."""
+    filename = file.filename or ""
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Only .xlsx files are supported")
+
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB upload limit",
+        )
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded workbook is empty")
+    return content
+
+
+def load_xlsx(content: bytes, *, read_only: bool = False):
+    """Convert malformed workbook errors into a stable client-facing response."""
+    try:
+        return openpyxl.load_workbook(BytesIO(content), read_only=read_only)
+    except (InvalidFileException, BadZipFile, OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid or corrupted .xlsx workbook") from exc
+
+
+def safe_output_stem(filename: str | None) -> str:
+    """Return a filesystem-safe, bounded stem for a user supplied filename."""
+    basename = str(filename or "workbook").replace("\\", "/").rsplit("/", 1)[-1]
+    stem = basename.rsplit(".", 1)[0]
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._-")
+    return (cleaned or "workbook")[:80]
 
 def extract_kbli_codes(text: str) -> list[str]:
     """Extract potential KBLI codes from text using regex"""
@@ -224,6 +281,24 @@ def lookup_code(code: str) -> dict:
         "metadata": {},
         "status": "not_found"
     }
+
+
+def format_code_matches(codes: list[str]) -> tuple[list[str], list[str], list[str]]:
+    """Format titles and hierarchies without leaking state between codes."""
+    titles = []
+    hierarchies = []
+    found_codes = []
+    for code in codes:
+        result = lookup_code(code)
+        if result["status"] == "found":
+            normalized_code = result["kode"]
+            found_codes.append(normalized_code)
+            titles.append(f"[{normalized_code}] {result['judul']}")
+            hierarchies.append(f"[{normalized_code}] {result['hierarki']}")
+        else:
+            titles.append(f"[{code}] Not Found")
+            hierarchies.append(f"[{code}] -")
+    return titles, hierarchies, found_codes
 
 def _tokenize_text(text: str) -> list[str]:
     """Tokenize Indonesian text for transparent local matching reasons."""
@@ -571,7 +646,10 @@ async def stats():
     }
 
 @app.get("/search")
-async def search_kbli(q: str, limit: int = 10):
+async def search_kbli(
+    q: str = Query(min_length=2, max_length=200),
+    limit: int = Query(default=10, ge=1, le=50),
+):
     """
     Search KBLI by keyword in title, hierarchy, or description.
     Supports fuzzy matching.
@@ -622,7 +700,10 @@ async def search_kbli(q: str, limit: int = 10):
     }
 
 @app.get("/autocomplete")
-async def autocomplete(q: str, limit: int = 5):
+async def autocomplete(
+    q: str = Query(min_length=1, max_length=100),
+    limit: int = Query(default=5, ge=1, le=20),
+):
     """
     Autocomplete suggestions for KBLI codes and titles.
     Returns quick suggestions as user types.
@@ -675,7 +756,7 @@ async def expand_query_with_ai(query: str) -> dict:
     Use OpenAI to expand informal Indonesian query into KBLI terminology.
     Returns expanded keywords for better search matching.
     """
-    if not openai_client:
+    if not async_openai_client:
         keywords = expand_local_keywords(query)
         return {"expanded": query, "keywords": keywords or [query], "ai_used": False}
 
@@ -728,7 +809,7 @@ Output: 494, angkutan jalan, pindahan
 """
 
     try:
-        response = openai_client.chat.completions.create(
+        response = await async_openai_client.chat.completions.create(
             model="gpt-5.4-mini-2026-03-17",
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -753,11 +834,12 @@ Output: 494, angkutan jalan, pindahan
         }
     except Exception as e:
         print(f"OpenAI error: {e}")
-        return {"expanded": query, "keywords": [query], "ai_used": False, "error": str(e)}
+        return {"expanded": query, "keywords": [query], "ai_used": False}
 
 def search_with_keywords(keywords: list[str], limit: int = 10) -> list[dict]:
     """Search KBLI using multiple keywords with advanced scoring"""
     results = []
+    has_code_hint = any(str(keyword).strip().isdigit() for keyword in keywords)
     
     for code, info in kbli_lookup.items():
         judul_lower = info['judul'].lower()
@@ -822,14 +904,22 @@ def search_with_keywords(keywords: list[str], limit: int = 10) -> list[dict]:
         if full_query in judul_lower:
             score += 2000  # Huge bonus for exact phrase
         
-        if score > 0:
+        unique_matches = list(dict.fromkeys(matched_keywords))
+        direct_code_match = any(
+            str(keyword).strip().isdigit() and code.startswith(str(keyword).strip())
+            for keyword in keywords
+        )
+
+        # Curated expansions contain a strong code hint. Avoid returning documents
+        # that matched only one generic word such as "makan" or "barang".
+        if score > 0 and (not has_code_hint or direct_code_match or len(unique_matches) >= 2):
             result = {
                 "code": code,
                 "judul": info["judul"],
                 "hierarki": info["hierarki"],
                 "cakupan": info.get("cakupan", "")[:200],
                 "score": score,
-                "matched_keywords": list(set(matched_keywords))  # Remove duplicates
+                "matched_keywords": unique_matches
             }
             result["reasoning"] = build_local_reasoning(
                 " ".join(keywords),
@@ -860,7 +950,10 @@ def merge_manual_results(query: str, results: list[dict], limit: int) -> list[di
     return merged[:limit]
 
 @app.get("/search/smart")
-async def smart_search(q: str, limit: int = 10):
+async def smart_search(
+    q: str = Query(min_length=2, max_length=200),
+    limit: int = Query(default=10, ge=1, le=20),
+):
     """
     AI-Enhanced Smart Search.
     Uses GPT to translate informal queries into KBLI terminology.
@@ -955,7 +1048,10 @@ OUTPUT FORMAT (JSON only, no markdown):
         return candidates[:top_k]
 
 @app.get("/search/kbji")
-async def kbji_search(q: str, limit: int = 5):
+async def kbji_search(
+    q: str = Query(min_length=2, max_length=200),
+    limit: int = Query(default=5, ge=1, le=20),
+):
     """
     Search KBJI occupations using hybrid retrieval when available.
     """
@@ -1015,7 +1111,10 @@ async def kbji_search_status():
     }
 
 @app.get("/autocomplete/smart")
-async def smart_autocomplete(q: str, limit: int = 5):
+async def smart_autocomplete(
+    q: str = Query(min_length=2, max_length=100),
+    limit: int = Query(default=5, ge=1, le=20),
+):
     """
     AI-Enhanced Autocomplete.
     Uses semantic understanding to provide better suggestions.
@@ -1051,12 +1150,12 @@ async def smart_autocomplete(q: str, limit: int = 5):
 
 @app.get("/search/hybrid")
 async def hybrid_search(
-    q: str, 
-    top_k: int = 5,
+    q: str = Query(min_length=2, max_length=200),
+    top_k: int = Query(default=5, ge=1, le=10),
     use_reranking: bool = True
 ):
     """
-    🚀 Hybrid Search - Best accuracy for KBLI classification.
+    ðŸš€ Hybrid Search - Best accuracy for KBLI classification.
     
     Combines multiple retrieval methods:
     1. BM25 keyword matching (handles exact terms)
@@ -1216,11 +1315,8 @@ async def upload_preview(file: UploadFile = File(...)):
     Upload Excel file and return column headers + preview.
     Does NOT process yet.
     """
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Only Excel files supported (.xlsx, .xls)")
-    
-    content = await file.read()
-    wb = openpyxl.load_workbook(BytesIO(content), read_only=True)
+    content = await read_xlsx_upload(file)
+    wb = await asyncio.to_thread(load_xlsx, content, read_only=True)
     sheet = wb.active
     
     # Get headers (first row)
@@ -1233,10 +1329,8 @@ async def upload_preview(file: UploadFile = File(...)):
     for i, row in enumerate(sheet.iter_rows(min_row=2, max_row=6, values_only=True)):
         sample_rows.append(list(row))
     
-    # Count total rows
-    total_rows = 0
-    for _ in sheet.iter_rows(min_row=2, values_only=True):
-        total_rows += 1
+    # read_only worksheets already expose the parsed worksheet bounds.
+    total_rows = max(sheet.max_row - 1, 0)
     
     wb.close()
     
@@ -1257,11 +1351,8 @@ async def lookup_batch(
     Pattern matching - fast and scalable.
     Returns Excel file directly.
     """
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Only Excel files supported")
-    
-    content = await file.read()
-    wb = openpyxl.load_workbook(BytesIO(content))
+    content = await read_xlsx_upload(file)
+    wb = await asyncio.to_thread(load_xlsx, content)
     sheet = wb.active
     
     # Find column index
@@ -1307,19 +1398,8 @@ async def lookup_batch(
             
             if codes:
                 # Lookup ALL codes
-                juduls = []
-                hierarkis = []
-                found_any = False
-                
-                for code in codes:
-                    result = lookup_code(code)
-                    if result["status"] == "found":
-                        juduls.append(f"[{code}] {result['judul']}")
-                        hierarkis.append(f"[{code}] {result['hierarki']}")
-                        found_any = True
-                    else:
-                        juduls.append(f"[{code}] Not Found")
-                        hierarkis.append(f"[{code}] -")
+                juduls, hierarkis, valid_codes = format_code_matches(codes)
+                found_any = bool(valid_codes)
                 
                 # Join with newlines
                 sheet.cell(row=row_idx, column=result_col_judul, value="\n".join(juduls))
@@ -1330,12 +1410,12 @@ async def lookup_batch(
                 sheet.cell(row=row_idx, column=result_col_hierarki).alignment = Alignment(wrap_text=True)
                 
                 if found_any:
-                    status_text = f"Found ({len(juduls)})"
+                    status_text = f"Found ({len(valid_codes)}/{len(codes)})"
                     sheet.cell(row=row_idx, column=result_col_status, value=status_text)
                     sheet.cell(row=row_idx, column=result_col_status).font = Font(color="22C55E")
                     found_count += 1
                 else:
-                    sheet.cell(row=row_idx, column=result_col_status, value="✗ Not Found")
+                    sheet.cell(row=row_idx, column=result_col_status, value="âœ— Not Found")
                     sheet.cell(row=row_idx, column=result_col_status).font = Font(color="EF4444")
                     not_found_count += 1
             else:
@@ -1354,12 +1434,12 @@ async def lookup_batch(
     
     # Save to BytesIO
     output = BytesIO()
-    wb.save(output)
+    await asyncio.to_thread(wb.save, output)
     output.seek(0)
     wb.close()
     
     # Generate filename
-    original_name = Path(file.filename).stem
+    original_name = safe_output_stem(file.filename)
     result_filename = f"{original_name}_KBLI_result.xlsx"
     
     return StreamingResponse(
@@ -1377,18 +1457,23 @@ async def lookup_batch(
 # Create temp directory for downloads
 TEMP_DIR = Path(__file__).parent / "temp_downloads"
 TEMP_DIR.mkdir(exist_ok=True)
+TEMP_DIR_RESOLVED = TEMP_DIR.resolve()
 
 @app.get("/download/{filename}")
 async def download_file(filename: str):
     """Download generated result file"""
-    file_path = TEMP_DIR / filename
-    if not file_path.exists():
+    if Path(filename).name != filename or not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Invalid download filename")
+
+    file_path = (TEMP_DIR / filename).resolve()
+    if file_path.parent != TEMP_DIR_RESOLVED or not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     
     return FileResponse(
         file_path, 
         filename=filename,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        background=BackgroundTask(file_path.unlink, missing_ok=True),
     )
 
 @app.post("/lookup/batch-stream")
@@ -1400,16 +1485,13 @@ async def lookup_batch_stream(
     Process Excel with SSE streaming for progress updates.
     Returns progress events, then saves file and returns download URL.
     """
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Only Excel files supported")
-    
-    content = await file.read()
+    content = await read_xlsx_upload(file)
     
     # Store filename for later use
     original_filename = file.filename
+    wb = await asyncio.to_thread(load_xlsx, content)
 
     async def generate():
-        wb = openpyxl.load_workbook(BytesIO(content))
         sheet = wb.active
         
         # Find column index
@@ -1444,22 +1526,17 @@ async def lookup_batch_stream(
             if cell_value:
                 codes = extract_kbli_codes(str(cell_value))
                 if codes:
-                    # Lookup logic (simplified for brevity in this replace block, but actual logic remains)
-                    juduls = []
-                    valid_codes = []
-                    found_any = False
-                    
-                    for code in codes:
-                        res = lookup_code(code)
-                        if res["status"] == "found":
-                            found_any = True
-                            valid_codes.append(res["kode"])
-                            juduls.append(f"[{res['kode']}] {res['judul']}")
+                    juduls, hierarkis, valid_codes = format_code_matches(codes)
+                    found_any = bool(valid_codes)
                     
                     if found_any:
                         sheet.cell(row=row_idx, column=result_col_judul, value="; ".join(juduls))
-                        sheet.cell(row=row_idx, column=result_col_hierarki, value=res.get("hierarki", ""))
-                        sheet.cell(row=row_idx, column=result_col_status, value="Found")
+                        sheet.cell(row=row_idx, column=result_col_hierarki, value="; ".join(hierarkis))
+                        sheet.cell(
+                            row=row_idx,
+                            column=result_col_status,
+                            value=f"Found ({len(valid_codes)}/{len(codes)})",
+                        )
                         found_count += 1
                         result_info = {"code": valid_codes[0], "judul": juduls[0], "status": "found"}
                     else:
@@ -1468,6 +1545,7 @@ async def lookup_batch_stream(
                         result_info = {"code": f"{len(codes)} codes", "judul": "", "status": "not_found"}
                 else:
                      sheet.cell(row=row_idx, column=result_col_status, value="No Code")
+                     not_found_count += 1
             else:
                  sheet.cell(row=row_idx, column=result_col_status, value="Empty")
 
@@ -1476,11 +1554,11 @@ async def lookup_batch_stream(
                 yield f"data: {json.dumps({'type': 'progress', 'current': current, 'total': total_rows, 'found': found_count, 'not_found': not_found_count, 'latest': result_info})}\n\n"
         
         # Save to TEMP file instead of returning base64
-        original_name_stem = Path(original_filename).stem
-        result_filename = f"{original_name_stem}_RESULT.xlsx"
+        original_name_stem = safe_output_stem(original_filename)
+        result_filename = f"{original_name_stem}_{uuid4().hex[:12]}_RESULT.xlsx"
         save_path = TEMP_DIR / result_filename
         
-        wb.save(save_path)
+        await asyncio.to_thread(wb.save, save_path)
         wb.close()
         
         # Return download URL instead of file content
@@ -1498,3 +1576,4 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+
