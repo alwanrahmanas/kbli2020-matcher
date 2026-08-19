@@ -72,6 +72,15 @@ class VectorStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(first), 2)
         self.assertEqual(client.embeddings.calls, 1)
 
+    def test_cache_fingerprint_includes_indexed_fields(self):
+        documents = [{"judul": "Warung", "cakupan": "Makanan"}]
+        title_only = LocalVectorStore._documents_fingerprint(documents, ["judul"])
+        title_and_scope = LocalVectorStore._documents_fingerprint(
+            documents,
+            ["judul", "cakupan"],
+        )
+        self.assertNotEqual(title_only, title_and_scope)
+
 
 class HybridCacheTests(unittest.IsolatedAsyncioTestCase):
     async def test_duplicate_concurrent_searches_are_coalesced_and_cached(self):
@@ -79,7 +88,15 @@ class HybridCacheTests(unittest.IsolatedAsyncioTestCase):
         engine.is_ready = True
         calls = 0
 
-        async def fake_uncached(query, top_k, use_reranking, retrieval_top_k):
+        async def fake_uncached(
+            query,
+            top_k,
+            use_reranking,
+            retrieval_top_k,
+            retrieval_query,
+            semantic_query,
+            query_context,
+        ):
             nonlocal calls
             calls += 1
             await asyncio.sleep(0.02)
@@ -95,6 +112,50 @@ class HybridCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, 1)
         self.assertEqual(first, second)
         self.assertEqual(second, third)
+
+    async def test_understood_queries_reach_each_retrieval_stage(self):
+        engine = HybridSearchEngine(FakeClient())
+        engine.documents = [{"kode_kbli": "10219", "judul": "Industri Pengolahan Ikan"}]
+
+        class RecordingBm25:
+            query = None
+
+            def search(self, query, top_k):
+                self.query = query
+                return [(0, 1.0)]
+
+        class RecordingVector:
+            query = None
+
+            async def search(self, query, top_k):
+                self.query = query
+                return [(0, 0.9)]
+
+        class RecordingReranker:
+            context = None
+
+            async def rerank(self, query, candidates, top_k, query_context=""):
+                self.context = query_context
+                return candidates[:top_k], True
+
+        engine.bm25 = RecordingBm25()
+        engine.vector_store = RecordingVector()
+        engine.reranker = RecordingReranker()
+
+        result = await engine._search_uncached(
+            "usaha olahan ikan",
+            1,
+            True,
+            10,
+            "produksi pengolahan ikan makanan beku",
+            "kegiatan memproduksi makanan beku berbahan ikan",
+            "Aktivitas utama adalah produksi, bukan perdagangan.",
+        )
+
+        self.assertEqual(engine.bm25.query, "produksi pengolahan ikan makanan beku")
+        self.assertIn("memproduksi", engine.vector_store.query)
+        self.assertIn("bukan perdagangan", engine.reranker.context)
+        self.assertEqual(result["rerank_status"], "success")
 
 
 if __name__ == "__main__":

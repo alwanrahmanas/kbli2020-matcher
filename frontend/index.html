@@ -430,6 +430,56 @@
             margin-bottom: 1rem;
         }
 
+        .feedback-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.65rem;
+            flex-wrap: wrap;
+            margin-top: 1rem;
+        }
+
+        .feedback-button {
+            min-height: 38px;
+            padding: 0.55rem 0.85rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            font: inherit;
+            font-size: 0.82rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: border-color 0.2s, background 0.2s, color 0.2s;
+        }
+
+        .feedback-button:hover:not(:disabled) {
+            border-color: var(--success);
+            color: var(--success);
+            background: rgba(22, 163, 74, 0.06);
+        }
+
+        .feedback-button.selected {
+            border-color: var(--success);
+            color: #166534;
+            background: rgba(22, 163, 74, 0.12);
+        }
+
+        .feedback-button:disabled {
+            cursor: default;
+            opacity: 0.68;
+        }
+
+        .feedback-footer {
+            padding: 0.25rem 0 0.75rem;
+        }
+
+        .feedback-status {
+            min-height: 1.25rem;
+            margin-top: 0.5rem;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+        }
+
         /* Upload zone */
         .upload-zone {
             border: 2px dashed var(--border);
@@ -796,6 +846,25 @@
         let searchTimeout = null;
         let autocompleteTimeout = null;
 
+        function getFeedbackClientId() {
+            const storageKey = 'kbli_feedback_client_id';
+            try {
+                let clientId = localStorage.getItem(storageKey);
+                if (!clientId) {
+                    const randomPart = window.crypto && window.crypto.randomUUID
+                        ? window.crypto.randomUUID().replace(/-/g, '')
+                        : Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+                    clientId = `client_${randomPart}`;
+                    localStorage.setItem(storageKey, clientId);
+                }
+                return clientId;
+            } catch (error) {
+                return `client_${Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`;
+            }
+        }
+
+        const FEEDBACK_CLIENT_ID = getFeedbackClientId();
+
         function escapeHtml(value) {
             return String(value ?? '').replace(/[&<>"']/g, character => ({
                 '&': '&amp;',
@@ -804,6 +873,51 @@
                 '"': '&quot;',
                 "'": '&#039;'
             })[character]);
+        }
+
+        function feedbackFooter(sessionId, taxonomy) {
+            if (!sessionId) return '';
+            return `
+                <div class="feedback-footer">
+                    <button type="button" class="feedback-button feedback-no-match" data-taxonomy="${escapeHtml(taxonomy)}">
+                        Tidak ada yang sesuai
+                    </button>
+                    <div class="feedback-status" aria-live="polite"></div>
+                </div>
+            `;
+        }
+
+        function bindFeedbackControls(container, sessionId, taxonomy) {
+            if (!sessionId) return;
+            const buttons = container.querySelectorAll('.feedback-button');
+            buttons.forEach(button => {
+                button.addEventListener('click', async () => {
+                    buttons.forEach(item => { item.disabled = true; });
+                    const status = container.querySelector('.feedback-status');
+                    if (status) status.textContent = 'Menyimpan pilihan...';
+
+                    const selectedCode = button.dataset.feedbackCode || null;
+                    try {
+                        const response = await fetch(`${API_BASE}/feedback`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                session_id: sessionId,
+                                client_id: FEEDBACK_CLIENT_ID,
+                                selected_code: selectedCode,
+                                no_match: !selectedCode
+                            })
+                        });
+                        if (!response.ok) throw new Error('Pilihan belum dapat disimpan');
+                        button.classList.add('selected');
+                        button.textContent = selectedCode ? 'Pilihan tersimpan' : 'Masukan tersimpan';
+                        if (status) status.textContent = 'Terima kasih. Pilihan ini akan membantu ranking pencarian berikutnya.';
+                    } catch (error) {
+                        buttons.forEach(item => { item.disabled = false; });
+                        if (status) status.textContent = error.message;
+                    }
+                });
+            });
         }
 
 
@@ -846,7 +960,7 @@
 
             try {
                 // Use new Hybrid Search with reranking
-                const response = await fetch(`${API_BASE}/search/hybrid?q=${encodeURIComponent(query)}&top_k=5`);
+                const response = await fetch(`${API_BASE}/search/hybrid?q=${encodeURIComponent(query)}&top_k=5&client_id=${encodeURIComponent(FEEDBACK_CLIENT_ID)}`);
                 if (!response.ok) throw new Error('Failed to fetch from backend');
 
                 const data = await response.json();
@@ -879,7 +993,9 @@
             if (!data.results || data.results.length === 0) {
                 container.innerHTML = `
                     <div class="search-meta">Tidak ada hasil yang relevan untuk "${escapeHtml(data.query)}"</div>
+                    ${feedbackFooter(data.feedback_session_id, 'kbli')}
                 `;
+                bindFeedbackControls(container, data.feedback_session_id, 'kbli');
                 return;
             }
 
@@ -924,11 +1040,19 @@
                         </div>
                         ${reasonHtml}
                         ${kbjiHtml}
+                        ${result.feedback_note ? `<div class="feedback-status">${escapeHtml(result.feedback_note)}</div>` : ''}
+                        <div class="feedback-actions">
+                            <button type="button" class="feedback-button" data-feedback-code="${code}" aria-label="Pilih KBLI ${code}">
+                                Pilih hasil ini
+                            </button>
+                        </div>
                     </div>
                 `;
             });
 
+            html += feedbackFooter(data.feedback_session_id, 'kbli');
             container.innerHTML = html;
+            bindFeedbackControls(container, data.feedback_session_id, 'kbli');
         }
 
 
@@ -1301,7 +1425,7 @@
             if (clearBtn) clearBtn.style.display = 'none';
 
             try {
-                const response = await fetch(`${API_BASE}/search/kbji?q=${encodeURIComponent(query)}&limit=5`);
+                const response = await fetch(`${API_BASE}/search/kbji?q=${encodeURIComponent(query)}&limit=5&client_id=${encodeURIComponent(FEEDBACK_CLIENT_ID)}`);
                 if (!response.ok) throw new Error('Failed to fetch from backend');
 
                 const data = await response.json();
@@ -1320,7 +1444,11 @@
 
         function renderKbjiResults(data, container) {
             if (!data.results || data.results.length === 0) {
-                container.innerHTML = `<div class="search-meta">Tidak ada hasil KBJI yang relevan untuk "${escapeHtml(data.query)}"</div>`;
+                container.innerHTML = `
+                    <div class="search-meta">Tidak ada hasil KBJI yang relevan untuk "${escapeHtml(data.query)}"</div>
+                    ${feedbackFooter(data.feedback_session_id, 'kbji')}
+                `;
+                bindFeedbackControls(container, data.feedback_session_id, 'kbji');
                 return;
             }
 
@@ -1347,11 +1475,19 @@
                         <div class="result-title">${escapeHtml(result.judul)}</div>
                         ${result.deskripsi ? '<div class="result-cakupan" style="margin-top: 0.5rem; font-size: 0.9rem;"><strong>Deskripsi:</strong> ' + escapeHtml(result.deskripsi).replace(/\\n/g, '<br>') + '</div>' : ''}
                         ${reasonHtml}
+                        ${result.feedback_note ? `<div class="feedback-status">${escapeHtml(result.feedback_note)}</div>` : ''}
+                        <div class="feedback-actions">
+                            <button type="button" class="feedback-button" data-feedback-code="${escapeHtml(result.code)}" aria-label="Pilih KBJI ${escapeHtml(result.code)}">
+                                Pilih hasil ini
+                            </button>
+                        </div>
                     </div>
                 `;
             });
 
+            html += feedbackFooter(data.feedback_session_id, 'kbji');
             container.innerHTML = html;
+            bindFeedbackControls(container, data.feedback_session_id, 'kbji');
         }
 
         // Close autocomplete when clicking outside

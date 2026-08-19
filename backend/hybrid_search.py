@@ -57,7 +57,12 @@ class BM25:
         # Filter very short tokens
         return [t for t in tokens if len(t) > 1]
     
-    def fit(self, documents: list[dict], text_fields: list[str] = None):
+    def fit(
+        self,
+        documents: list[dict],
+        text_fields: list[str] = None,
+        field_weights: dict[str, int] | None = None,
+    ):
         """
         Build BM25 index from documents.
         
@@ -74,8 +79,13 @@ class BM25:
         self.doc_len = []
         
         # Tokenize all documents
+        field_weights = field_weights or {}
         for doc in documents:
-            combined_text = " ".join(str(doc.get(f, "")) for f in text_fields)
+            field_values = []
+            for field in text_fields:
+                weight = max(1, int(field_weights.get(field, 1)))
+                field_values.extend([str(doc.get(field, ""))] * weight)
+            combined_text = " ".join(field_values)
             tokens = self._tokenize(combined_text)
             self.documents.append(tokens)
             self.doc_len.append(len(tokens))
@@ -237,8 +247,13 @@ class LocalVectorStore:
         return base_path / self.cache_file
     
     @staticmethod
-    def _documents_fingerprint(documents: list[dict]) -> str:
+    def _documents_fingerprint(
+        documents: list[dict],
+        text_fields: list[str] | None = None,
+    ) -> str:
         digest = hashlib.sha256()
+        digest.update(json.dumps(text_fields or [], ensure_ascii=False).encode("utf-8"))
+        digest.update(b"\n")
         for doc in documents:
             payload = json.dumps(doc, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             digest.update(payload.encode("utf-8"))
@@ -301,7 +316,7 @@ class LocalVectorStore:
         if text_fields is None:
             text_fields = ["judul", "cakupan"]
 
-        fingerprint = self._documents_fingerprint(documents)
+        fingerprint = self._documents_fingerprint(documents, text_fields)
         
         # Try loading from cache first
         if cache_dir and not force_rebuild:
@@ -416,13 +431,19 @@ class SemanticReranker:
     
     def __init__(self, openai_client: AsyncOpenAI):
         self.client = openai_client
+        self.model = (
+            os.getenv("KBLI_RERANK_MODEL")
+            or os.getenv("OPENAI_MODEL")
+            or "gpt-5.4-mini-2026-03-17"
+        )
     
     async def rerank(
         self, 
         query: str, 
         candidates: list[dict], 
-        top_k: int = 5
-    ) -> list[dict]:
+        top_k: int = 5,
+        query_context: str = "",
+    ) -> tuple[list[dict], bool]:
         """
         Re-rank candidates using LLM semantic understanding.
         
@@ -435,7 +456,7 @@ class SemanticReranker:
             Re-ranked list of candidates with added 'relevance_score' and 'reasoning'
         """
         if not candidates:
-            return []
+            return [], False
         
         # Limit candidates to prevent token overflow
         candidates = candidates[:15]
@@ -470,7 +491,8 @@ OUTPUT FORMAT (JSON only, no markdown):
 
 Urutkan berdasarkan relevansi tertinggi. Hanya sertakan kandidat yang RELEVAN (relevance > 0.3)."""
 
-        user_prompt = f"""Query: "{query}"
+        user_prompt = f"""Query asli: "{query}"
+Analisis query: {query_context or '-'}
 
 Kandidat KBLI:
 {candidate_str}
@@ -479,16 +501,19 @@ Evaluasi dan ranking berdasarkan relevansi. Output JSON saja."""
 
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-5.4-mini-2026-03-17",
+                model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0,
-                max_completion_tokens=1000
+                max_completion_tokens=1000,
+                response_format={"type": "json_object"},
             )
             
-            content = response.choices[0].message.content.strip()
+            content = (response.choices[0].message.content or "").strip()
+            if not content:
+                raise ValueError("KBLI reranker returned an empty response")
             
             # Parse JSON response
             if "```" in content:
@@ -501,20 +526,23 @@ Evaluasi dan ranking berdasarkan relevansi. Output JSON saja."""
             
             # Map back to candidates with scores
             reranked = []
+            seen_indices = set()
             for r in rankings[:top_k]:
                 idx = r.get("index", 1) - 1  # Convert to 0-based
-                if 0 <= idx < len(candidates):
+                relevance = float(r.get("relevance", 0.0))
+                if 0 <= idx < len(candidates) and idx not in seen_indices and relevance > 0.3:
+                    seen_indices.add(idx)
                     candidate = candidates[idx].copy()
-                    candidate["relevance_score"] = r.get("relevance", 0.0)
+                    candidate["relevance_score"] = relevance
                     candidate["reasoning"] = r.get("reason", "")
                     reranked.append(candidate)
             
-            return reranked
+            return (reranked, True) if reranked else (candidates[:top_k], False)
             
         except Exception as e:
             print(f"Reranking error: {e}")
             # Fallback: return top candidates without reranking
-            return candidates[:top_k]
+            return candidates[:top_k], False
 
 
 # ============================================================================
@@ -559,14 +587,18 @@ class HybridSearchEngine:
         
         # Build BM25 index (fast, synchronous)
         print("🔨 Building BM25 index...")
-        self.bm25.fit(valid_docs, text_fields=["judul", "hierarki", "cakupan"])
+        self.bm25.fit(
+            valid_docs,
+            text_fields=["judul", "hierarki", "cakupan"],
+            field_weights={"judul": 3, "hierarki": 2, "cakupan": 1},
+        )
         print(f"✅ BM25 index ready: {len(self.bm25.idf)} unique terms")
         
         # Build vector store (async, may use cache)
         print("🔨 Building Vector Store...")
         await self.vector_store.build_index(
             valid_docs, 
-            text_fields=["judul", "cakupan"],
+            text_fields=["judul", "hierarki", "cakupan"],
             cache_dir=cache_dir
         )
         
@@ -578,7 +610,10 @@ class HybridSearchEngine:
         query: str, 
         top_k: int = 5,
         use_reranking: bool = True,
-        retrieval_top_k: int = 20
+        retrieval_top_k: int = 20,
+        retrieval_query: str | None = None,
+        semantic_query: str | None = None,
+        query_context: str = "",
     ) -> dict:
         """
         Perform hybrid search.
@@ -597,9 +632,14 @@ class HybridSearchEngine:
 
         top_k = max(1, min(int(top_k), 20))
         retrieval_top_k = max(top_k, min(int(retrieval_top_k), 100))
+        retrieval_query = retrieval_query or query
+        semantic_query = semantic_query or query
 
         cache_key = (
             " ".join(query.lower().split()),
+            " ".join(retrieval_query.lower().split()),
+            " ".join(semantic_query.lower().split()),
+            " ".join(query_context.lower().split()),
             int(top_k),
             bool(use_reranking),
             int(retrieval_top_k),
@@ -613,7 +653,15 @@ class HybridSearchEngine:
         task = self._search_inflight.get(cache_key)
         if task is None:
             task = asyncio.create_task(
-                self._search_uncached(query, top_k, use_reranking, retrieval_top_k)
+                self._search_uncached(
+                    query,
+                    top_k,
+                    use_reranking,
+                    retrieval_top_k,
+                    retrieval_query,
+                    semantic_query,
+                    query_context,
+                )
             )
             self._search_inflight[cache_key] = task
 
@@ -635,13 +683,20 @@ class HybridSearchEngine:
         top_k: int,
         use_reranking: bool,
         retrieval_top_k: int,
+        retrieval_query: str,
+        semantic_query: str,
+        query_context: str,
     ) -> dict:
         """Execute retrieval and reranking without consulting the result cache."""
         
         # ====== STAGE 1: Parallel Retrieval ======
         # Run BM25 and Vector search in parallel
-        bm25_task = asyncio.create_task(asyncio.to_thread(self.bm25.search, query, retrieval_top_k))
-        vector_task = asyncio.create_task(self.vector_store.search(query, retrieval_top_k))
+        bm25_task = asyncio.create_task(
+            asyncio.to_thread(self.bm25.search, retrieval_query, retrieval_top_k)
+        )
+        vector_task = asyncio.create_task(
+            self.vector_store.search(semantic_query, retrieval_top_k)
+        )
         
         bm25_results, vector_results = await asyncio.gather(bm25_task, vector_task)
         
@@ -664,9 +719,15 @@ class HybridSearchEngine:
         
         # ====== STAGE 3: Semantic Re-ranking ======
         if use_reranking and candidates:
-            final_results = await self.reranker.rerank(query, candidates, top_k)
+            final_results, reranked = await self.reranker.rerank(
+                query,
+                candidates,
+                top_k,
+                query_context=query_context,
+            )
         else:
             final_results = candidates[:top_k]
+            reranked = False
         
         # Clean up internal fields
         for r in final_results:
@@ -677,6 +738,7 @@ class HybridSearchEngine:
             "total_candidates": len(fused_ranking),
             "bm25_top": len(bm25_results),
             "vector_top": len(vector_results),
+            "rerank_status": "success" if reranked else ("fallback" if use_reranking else "disabled"),
             "results": final_results
         }
     

@@ -12,6 +12,7 @@ services:
       - ./backend:/app/backend
       - ./kbli_parsed_fast.json:/app/kbli_parsed_fast.json
       - ./kbji_parsed.json:/app/kbji_parsed.json
+      - ./data:/app/data
     restart: unless-stopped
     networks:
       - kbli-network
