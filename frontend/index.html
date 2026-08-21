@@ -430,6 +430,56 @@
             margin-bottom: 1rem;
         }
 
+        .feedback-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.65rem;
+            flex-wrap: wrap;
+            margin-top: 1rem;
+        }
+
+        .feedback-button {
+            min-height: 38px;
+            padding: 0.55rem 0.85rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            font: inherit;
+            font-size: 0.82rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: border-color 0.2s, background 0.2s, color 0.2s;
+        }
+
+        .feedback-button:hover:not(:disabled) {
+            border-color: var(--success);
+            color: var(--success);
+            background: rgba(22, 163, 74, 0.06);
+        }
+
+        .feedback-button.selected {
+            border-color: var(--success);
+            color: #166534;
+            background: rgba(22, 163, 74, 0.12);
+        }
+
+        .feedback-button:disabled {
+            cursor: default;
+            opacity: 0.68;
+        }
+
+        .feedback-footer {
+            padding: 0.25rem 0 0.75rem;
+        }
+
+        .feedback-status {
+            min-height: 1.25rem;
+            margin-top: 0.5rem;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+        }
+
         /* Upload zone */
         .upload-zone {
             border: 2px dashed var(--border);
@@ -713,7 +763,7 @@
                 </div>
 
                 <div class="upload-zone" id="uploadZone" onclick="document.getElementById('excelFile').click()">
-                    <input type="file" id="excelFile" accept=".xlsx,.xls" onchange="handleFileSelect(event)">
+                    <input type="file" id="excelFile" accept=".xlsx" onchange="handleFileSelect(event)">
                     <div class="upload-icon">📊</div>
                     <p>Klik atau drag file Excel (.xlsx) ke sini</p>
                     <p class="upload-hint">File harus memiliki kolom berisi kode KBLI</p>
@@ -796,6 +846,80 @@
         let searchTimeout = null;
         let autocompleteTimeout = null;
 
+        function getFeedbackClientId() {
+            const storageKey = 'kbli_feedback_client_id';
+            try {
+                let clientId = localStorage.getItem(storageKey);
+                if (!clientId) {
+                    const randomPart = window.crypto && window.crypto.randomUUID
+                        ? window.crypto.randomUUID().replace(/-/g, '')
+                        : Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+                    clientId = `client_${randomPart}`;
+                    localStorage.setItem(storageKey, clientId);
+                }
+                return clientId;
+            } catch (error) {
+                return `client_${Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`;
+            }
+        }
+
+        const FEEDBACK_CLIENT_ID = getFeedbackClientId();
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, character => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            })[character]);
+        }
+
+        function feedbackFooter(sessionId, taxonomy) {
+            if (!sessionId) return '';
+            return `
+                <div class="feedback-footer">
+                    <button type="button" class="feedback-button feedback-no-match" data-taxonomy="${escapeHtml(taxonomy)}">
+                        Tidak ada yang sesuai
+                    </button>
+                    <div class="feedback-status" aria-live="polite"></div>
+                </div>
+            `;
+        }
+
+        function bindFeedbackControls(container, sessionId, taxonomy) {
+            if (!sessionId) return;
+            const buttons = container.querySelectorAll('.feedback-button');
+            buttons.forEach(button => {
+                button.addEventListener('click', async () => {
+                    buttons.forEach(item => { item.disabled = true; });
+                    const status = container.querySelector('.feedback-status');
+                    if (status) status.textContent = 'Menyimpan pilihan...';
+
+                    const selectedCode = button.dataset.feedbackCode || null;
+                    try {
+                        const response = await fetch(`${API_BASE}/feedback`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                session_id: sessionId,
+                                client_id: FEEDBACK_CLIENT_ID,
+                                selected_code: selectedCode,
+                                no_match: !selectedCode
+                            })
+                        });
+                        if (!response.ok) throw new Error('Pilihan belum dapat disimpan');
+                        button.classList.add('selected');
+                        button.textContent = selectedCode ? 'Pilihan tersimpan' : 'Masukan tersimpan';
+                        if (status) status.textContent = 'Terima kasih. Pilihan ini akan membantu ranking pencarian berikutnya.';
+                    } catch (error) {
+                        buttons.forEach(item => { item.disabled = false; });
+                        if (status) status.textContent = error.message;
+                    }
+                });
+            });
+        }
+
 
 
         function handleSearchEnter(event) {
@@ -836,7 +960,7 @@
 
             try {
                 // Use new Hybrid Search with reranking
-                const response = await fetch(`${API_BASE}/search/hybrid?q=${encodeURIComponent(query)}&top_k=5`);
+                const response = await fetch(`${API_BASE}/search/hybrid?q=${encodeURIComponent(query)}&top_k=5&client_id=${encodeURIComponent(FEEDBACK_CLIENT_ID)}`);
                 if (!response.ok) throw new Error('Failed to fetch from backend');
 
                 const data = await response.json();
@@ -868,8 +992,10 @@
         function renderSearchResults(data, container) {
             if (!data.results || data.results.length === 0) {
                 container.innerHTML = `
-                    <div class="search-meta">Tidak ada hasil yang relevan untuk "${data.query}"</div>
+                    <div class="search-meta">Tidak ada hasil yang relevan untuk "${escapeHtml(data.query)}"</div>
+                    ${feedbackFooter(data.feedback_session_id, 'kbli')}
                 `;
+                bindFeedbackControls(container, data.feedback_session_id, 'kbli');
                 return;
             }
 
@@ -878,14 +1004,18 @@
             data.results.forEach(result => {
                 // Handling new hybrid search fields
                 const score = result.relevance_score ? (result.relevance_score * 100).toFixed(0) + '%' : (result.score ? result.score.toFixed(0) : 'N/A');
+                const code = escapeHtml(result.code);
+                const title = escapeHtml(result.judul);
+                const hierarchy = escapeHtml(result.hierarki);
+                const scope = escapeHtml(result.cakupan);
                 const reasonHtml = result.reasoning ?
                     `<div style="margin-top:0.75rem; padding:0.75rem; background:rgba(0,0,0,0.02); border-radius:8px; font-size:0.85rem; border-left:3px solid var(--accent-secondary); color:var(--text-secondary);">
-                        <span style="color:var(--accent-secondary); font-weight:600;">Reasoning KBLI:</span> ${result.reasoning}
+                        <span style="color:var(--accent-secondary); font-weight:600;">Reasoning KBLI:</span> ${escapeHtml(result.reasoning)}
                      </div>` : '';
                 const kbjiHtml = result.kbji ?
                     `<div style="margin-top:0.75rem; padding:0.75rem; background:rgba(22,163,74,0.06); border-radius:8px; font-size:0.85rem; border-left:3px solid var(--success); color:var(--text-secondary);">
-                        <div style="color:var(--success); font-weight:700; margin-bottom:0.35rem;">KBJI: ${result.kbji.code} - ${result.kbji.judul}</div>
-                        <div><span style="font-weight:600;">Reasoning KBJI:</span> ${result.kbji.reasoning}</div>
+                        <div style="color:var(--success); font-weight:700; margin-bottom:0.35rem;">KBJI: ${escapeHtml(result.kbji.code)} - ${escapeHtml(result.kbji.judul)}</div>
+                        <div><span style="font-weight:600;">Reasoning KBJI:</span> ${escapeHtml(result.kbji.reasoning)}</div>
                     </div>` : '';
 
                 // Color based on score
@@ -898,23 +1028,31 @@
                 html += `
                     <div class="result-card found">
                         <div class="result-header">
-                            <span class="result-code">${result.code}</span>
+                            <span class="result-code">${code}</span>
                             <div class="status-badge" style="background: rgba(0,0,0,0.05); color: ${scoreColor}; border: 1px solid ${scoreColor};">
                                 Match: ${score}
                             </div>
                         </div>
-                        <div class="result-title">${result.judul}</div>
-                        <div class="result-hierarki">📍 ${result.hierarki}</div>
+                        <div class="result-title">${title}</div>
+                        <div class="result-hierarki">📍 ${hierarchy}</div>
                         <div class="result-cakupan" style="margin-top: 0.5rem; font-size: 0.9rem;">
-                            ${result.cakupan ? `<strong>Cakupan:</strong> ${result.cakupan}` : ''}
+                            ${result.cakupan ? `<strong>Cakupan:</strong> ${scope}` : ''}
                         </div>
                         ${reasonHtml}
                         ${kbjiHtml}
+                        ${result.feedback_note ? `<div class="feedback-status">${escapeHtml(result.feedback_note)}</div>` : ''}
+                        <div class="feedback-actions">
+                            <button type="button" class="feedback-button" data-feedback-code="${code}" aria-label="Pilih KBLI ${code}">
+                                Pilih hasil ini
+                            </button>
+                        </div>
                     </div>
                 `;
             });
 
+            html += feedbackFooter(data.feedback_session_id, 'kbli');
             container.innerHTML = html;
+            bindFeedbackControls(container, data.feedback_session_id, 'kbli');
         }
 
 
@@ -937,11 +1075,14 @@
 
                     if (data.suggestions && data.suggestions.length > 0) {
                         dropdown.innerHTML = data.suggestions.map(s => `
-                            <div class="autocomplete-item" onclick="selectCodeSuggestion('${s.code}')">
-                                <div class="autocomplete-item-code">${s.code}</div>
-                                <div class="autocomplete-item-title">${s.judul.substring(0, 80)}...</div>
+                            <div class="autocomplete-item" data-code="${escapeHtml(s.code)}">
+                                <div class="autocomplete-item-code">${escapeHtml(s.code)}</div>
+                                <div class="autocomplete-item-title">${escapeHtml(String(s.judul || '').substring(0, 80))}...</div>
                             </div>
                         `).join('');
+                        dropdown.querySelectorAll('.autocomplete-item').forEach(item => {
+                            item.addEventListener('click', () => selectCodeSuggestion(item.dataset.code));
+                        });
                         dropdown.classList.add('active');
                     } else {
                         dropdown.classList.remove('active');
@@ -1006,24 +1147,24 @@
             let html = `
                 <div class="result-card ${statusClass}">
                     <div class="result-header">
-                        <span class="result-code">${data.code}</span>
+                        <span class="result-code">${escapeHtml(data.code)}</span>
                         ${statusBadge}
                     </div>
             `;
 
             if (data.found) {
                 html += `
-                    <div class="result-title">${data.judul || 'N/A'}</div>
-                    ${data.hierarki ? `<div class="result-hierarki">📍 ${data.hierarki}</div>` : ''}
-                    ${data.cakupan ? `<div class="result-cakupan">${data.cakupan.substring(0, 300)}...</div>` : ''}
+                    <div class="result-title">${escapeHtml(data.judul || 'N/A')}</div>
+                    ${data.hierarki ? `<div class="result-hierarki">📍 ${escapeHtml(data.hierarki)}</div>` : ''}
+                    ${data.cakupan ? `<div class="result-cakupan">${escapeHtml(data.cakupan.substring(0, 300))}...</div>` : ''}
                     ${data.reasoning ? `<div style="margin-top:0.75rem; padding:0.75rem; background:rgba(0,0,0,0.02); border-radius:8px; font-size:0.85rem; border-left:3px solid var(--accent-secondary); color:var(--text-secondary);">
-                        <span style="color:var(--accent-secondary); font-weight:600;">Reasoning:</span> ${data.reasoning}
+                        <span style="color:var(--accent-secondary); font-weight:600;">Reasoning:</span> ${escapeHtml(data.reasoning)}
                     </div>` : ''}
                 `;
             } else {
                 html += `
                     <div class="result-title" style="color: var(--text-muted);">Kode tidak ditemukan dalam database KBLI 2025</div>
-                    <div class="result-cakupan">${data.reasoning || 'Pastikan kode yang dimasukkan benar (5 digit).'}</div>
+                    <div class="result-cakupan">${escapeHtml(data.reasoning || 'Pastikan kode yang dimasukkan benar (5 digit).')}</div>
                 `;
             }
 
@@ -1039,6 +1180,11 @@
             if (!file) return;
 
             if (file) {
+                if (!file.name.toLowerCase().endsWith('.xlsx')) {
+                    alert('Hanya file .xlsx yang didukung.');
+                    return;
+                }
+                uploadedFile = file;
                 document.getElementById('fileName').textContent = file.name;
                 readExcelColumns(file);
             }
@@ -1082,21 +1228,21 @@
             let html = `
                 <div class="result-card ${statusClass}">
                     <div class="result-header">
-                        <span class="result-code">${data.code}</span>
+                        <span class="result-code">${escapeHtml(data.code)}</span>
                         ${statusBadge}
                     </div>
             `;
 
             if (data.found) {
                 html += `
-                    <div class="result-title">${data.judul || 'N/A'}</div>
-                    ${data.level ? `<div class="result-hierarki">📍 Level: ${data.level}</div>` : ''}
-                    ${data.deskripsi ? `<div class="result-cakupan" style="margin-top: 1rem;"><strong>Deskripsi:</strong><br>${data.deskripsi}</div>` : ''}
+                    <div class="result-title">${escapeHtml(data.judul || 'N/A')}</div>
+                    ${data.level ? `<div class="result-hierarki">📍 Level: ${escapeHtml(data.level)}</div>` : ''}
+                    ${data.deskripsi ? `<div class="result-cakupan" style="margin-top: 1rem;"><strong>Deskripsi:</strong><br>${escapeHtml(data.deskripsi).replace(/\n/g, '<br>')}</div>` : ''}
                 </div>`;
             } else {
                 html += `
                     <div style="color: var(--text-secondary); margin-top: 1rem;">
-                        Kode KBJI <strong>${data.code}</strong> tidak ditemukan di database.
+                        Kode KBJI <strong>${escapeHtml(data.code)}</strong> tidak ditemukan di database.
                     </div>
                 </div>`;
             }
@@ -1111,11 +1257,15 @@
                 method: 'POST',
                 body: formData
             })
-                .then(r => r.json())
+                .then(async response => {
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.detail || 'Upload gagal');
+                    return data;
+                })
                 .then(data => {
                     const select = document.getElementById('columnSelect');
                     select.innerHTML = data.headers.map(h =>
-                        `<option value="${h}">${h}</option>`
+                        `<option value="${escapeHtml(h)}">${escapeHtml(h)}</option>`
                     ).join('');
 
                     document.getElementById('totalRows').textContent = data.total_rows;
@@ -1124,6 +1274,7 @@
                     document.getElementById('progressContainer').classList.remove('active');
                 })
                 .catch(err => {
+                    uploadedFile = null;
                     alert('Error uploading file: ' + err.message);
                 });
         }
@@ -1274,7 +1425,7 @@
             if (clearBtn) clearBtn.style.display = 'none';
 
             try {
-                const response = await fetch(`${API_BASE}/search/kbji?q=${encodeURIComponent(query)}&limit=5`);
+                const response = await fetch(`${API_BASE}/search/kbji?q=${encodeURIComponent(query)}&limit=5&client_id=${encodeURIComponent(FEEDBACK_CLIENT_ID)}`);
                 if (!response.ok) throw new Error('Failed to fetch from backend');
 
                 const data = await response.json();
@@ -1293,7 +1444,11 @@
 
         function renderKbjiResults(data, container) {
             if (!data.results || data.results.length === 0) {
-                container.innerHTML = `<div class="search-meta">Tidak ada hasil KBJI yang relevan untuk "${data.query}"</div>`;
+                container.innerHTML = `
+                    <div class="search-meta">Tidak ada hasil KBJI yang relevan untuk "${escapeHtml(data.query)}"</div>
+                    ${feedbackFooter(data.feedback_session_id, 'kbji')}
+                `;
+                bindFeedbackControls(container, data.feedback_session_id, 'kbji');
                 return;
             }
 
@@ -1306,25 +1461,33 @@
                     : 'N/A';
                 const reasonHtml = result.reasoning ?
                     `<div style="margin-top:0.75rem; padding:0.75rem; background:rgba(0,0,0,0.02); border-radius:8px; font-size:0.85rem; border-left:3px solid var(--accent-secondary); color:var(--text-secondary);">
-                        <span style="color:var(--accent-secondary); font-weight:600;">Reasoning:</span> ${result.reasoning}
+                        <span style="color:var(--accent-secondary); font-weight:600;">Reasoning:</span> ${escapeHtml(result.reasoning)}
                      </div>` : '';
 
                 html += `
                     <div class="result-card found" style="border-left-color: #16a34a;">
                         <div class="result-header">
-                            <span class="result-code" style="color: #16a34a;">${result.code}</span>
+                            <span class="result-code" style="color: #16a34a;">${escapeHtml(result.code)}</span>
                             <div class="status-badge" style="background: rgba(22,163,74,0.1); color: #16a34a;">
                                 Score: ${displayScore}
                             </div>
                         </div>
-                        <div class="result-title">${result.judul}</div>
-                        ${result.deskripsi ? '<div class="result-cakupan" style="margin-top: 0.5rem; font-size: 0.9rem;"><strong>Deskripsi:</strong> ' + result.deskripsi.replace(/\\n/g, '<br>') + '</div>' : ''}
+                        <div class="result-title">${escapeHtml(result.judul)}</div>
+                        ${result.deskripsi ? '<div class="result-cakupan" style="margin-top: 0.5rem; font-size: 0.9rem;"><strong>Deskripsi:</strong> ' + escapeHtml(result.deskripsi).replace(/\\n/g, '<br>') + '</div>' : ''}
                         ${reasonHtml}
+                        ${result.feedback_note ? `<div class="feedback-status">${escapeHtml(result.feedback_note)}</div>` : ''}
+                        <div class="feedback-actions">
+                            <button type="button" class="feedback-button" data-feedback-code="${escapeHtml(result.code)}" aria-label="Pilih KBJI ${escapeHtml(result.code)}">
+                                Pilih hasil ini
+                            </button>
+                        </div>
                     </div>
                 `;
             });
 
+            html += feedbackFooter(data.feedback_session_id, 'kbji');
             container.innerHTML = html;
+            bindFeedbackControls(container, data.feedback_session_id, 'kbji');
         }
 
         // Close autocomplete when clicking outside

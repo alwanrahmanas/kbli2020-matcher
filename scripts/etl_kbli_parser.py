@@ -33,7 +33,7 @@ PDF_PATH    = Path(r"c:\Users\Acer\Downloads\kbbi-writer\kbli2020-matcher\klasif
 OUTPUT_PATH = Path(r"c:\Users\Acer\Downloads\kbbi-writer\kbli2020-matcher\kbli_parsed_fast.json")
 
 USE_LLM_REPAIR = True
-LLM_MODEL      = "gpt-5.4-mini-2026-03-17"
+LLM_MODEL      = "gpt-5.6-terra"
 
 # Page offset: the real KBLI entries start around page 248 (0-indexed: 247)
 # Pages before this are introduction, TOC, and change-log tables

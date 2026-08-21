@@ -9,19 +9,23 @@ import re
 import os
 import sys
 import asyncio
+from uuid import uuid4
 from pathlib import Path
 from typing import Optional
 from io import BytesIO
 from contextlib import asynccontextmanager
+from zipfile import BadZipFile
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils.exceptions import InvalidFileException
 from dotenv import load_dotenv
-from openai import OpenAI, AsyncOpenAI
+from openai import AsyncOpenAI
 
 # Windows consoles often default to cp1252, which can crash on emoji/status logs.
 for stream in (sys.stdout, sys.stderr):
@@ -32,28 +36,56 @@ for stream in (sys.stdout, sys.stderr):
 
 # Import Hybrid Search Engine
 try:
+    from backend.feedback_store import FeedbackStore
     from backend.hybrid_search import BM25, HybridSearchEngine, LocalVectorStore, reciprocal_rank_fusion
+    from backend.query_understanding import (
+        QueryUnderstandingService,
+        build_retrieval_queries,
+        local_query_understanding,
+    )
 except ImportError:
+    from feedback_store import FeedbackStore
     from hybrid_search import BM25, HybridSearchEngine, LocalVectorStore, reciprocal_rank_fusion
+    from query_understanding import QueryUnderstandingService, build_retrieval_queries, local_query_understanding
 
 # Load environment variables
 load_dotenv()
+OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "30"))
+CLASSIFICATION_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-terra")
+KBJI_RERANK_MODEL = os.getenv("KBJI_RERANK_MODEL", CLASSIFICATION_MODEL)
+QUERY_UNDERSTANDING_MODEL = os.getenv("QUERY_UNDERSTANDING_MODEL", CLASSIFICATION_MODEL)
+OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "high")
+FEEDBACK_DB_PATH = Path(
+    os.getenv(
+        "FEEDBACK_DB_PATH",
+        str(Path(__file__).parent.parent / "data" / "feedback.sqlite3"),
+    )
+)
 
-# Initialize OpenAI client
-openai_client = None
+# Initialize the async client once; synchronous SDK calls would block FastAPI's event loop.
+async_openai_client: AsyncOpenAI = None
 try:
     api_key = os.getenv("OPENAI_API_KEY")
     if api_key:
-        openai_client = OpenAI(api_key=api_key)
+        async_openai_client = AsyncOpenAI(
+            api_key=api_key,
+            timeout=OPENAI_TIMEOUT_SECONDS,
+            max_retries=2,
+        )
         print("✅ OpenAI client initialized for smart search")
     else:
         print("⚠️ No OPENAI_API_KEY found - smart search disabled")
 except Exception as e:
     print(f"⚠️ OpenAI initialization failed: {e}")
 
+query_understanding_service = QueryUnderstandingService(
+    async_openai_client,
+    model=QUERY_UNDERSTANDING_MODEL,
+)
+feedback_store = FeedbackStore(FEEDBACK_DB_PATH)
+
 # Global Hybrid Search Engine
 hybrid_search_engine: HybridSearchEngine = None
-async_openai_client: AsyncOpenAI = None
 
 # Global lookup dictionary: kode -> info
 kbli_lookup: dict[str, dict] = {}
@@ -63,6 +95,32 @@ kbji_raw_data: list[dict] = []
 kbji_bm25: BM25 = None
 kbji_vector_store: LocalVectorStore = None
 kbji_hybrid_ready = False
+
+# Search aliases connect common Indonesian job names to the task-based wording
+# used by KBJI. They are indexed, but never replace the official title.
+KBJI_CODE_ALIASES = {
+    "3511.01": "operator komputer operator sistem komputer",
+    "4110": "administrasi kantor tenaga administrasi tata usaha",
+    "4110.00": "admin sekolah administrasi sekolah tata usaha sekolah tenaga administrasi sekolah",
+    "4132": "entri data input data operator data",
+    "4132.01": "operator sekolah operator dapodik operator data sekolah entri data sekolah",
+    "4132.02": "petugas input data sekolah admin data sekolah",
+    "5414": "satpol pp polisi pamong praja ketertiban patroli pengamanan penertiban",
+}
+
+
+def prepare_kbji_search_entry(entry: dict) -> dict:
+    """Attach clean weighted text used only by KBJI retrieval."""
+    prepared = dict(entry)
+    code = str(prepared.get("kode_kbji", "")).strip()
+    title = str(prepared.get("judul", "")).strip()
+    description = str(prepared.get("deskripsi", "")).strip()
+    aliases = KBJI_CODE_ALIASES.get(code, "")
+    prepared["search_aliases"] = aliases
+    # Repeating the official title gives it more lexical weight than a long
+    # description containing a generic context word such as "sekolah".
+    prepared["search_text"] = f"{title} {title} {title} {aliases} {description}".strip()
+    return prepared
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -109,10 +167,11 @@ async def lifespan(app: FastAPI):
         kbji_regex = re.compile(r'^\d{1,4}(\.\d{2})?$')
         valid_kbji = []
 
-        for entry in kbji_raw_data:
+        for raw_entry in kbji_raw_data:
+            entry = prepare_kbji_search_entry(raw_entry)
             code = str(entry.get("kode_kbji", "")).strip()
             judul = str(entry.get("judul", "")).strip()
-            if code and code not in kbji_lookup and len(judul) > 5 and kbji_regex.match(code):
+            if code and code not in kbji_lookup and len(judul) >= 4 and kbji_regex.match(code):
                 kbji_lookup[code] = entry
                 valid_kbji.append(entry)
                 
@@ -128,7 +187,13 @@ async def lifespan(app: FastAPI):
     api_key = os.getenv("OPENAI_API_KEY")
     if api_key:
         try:
-            async_openai_client = AsyncOpenAI(api_key=api_key)
+            if async_openai_client is None:
+                async_openai_client = AsyncOpenAI(
+                    api_key=api_key,
+                    timeout=OPENAI_TIMEOUT_SECONDS,
+                    max_retries=2,
+                )
+            query_understanding_service.client = async_openai_client
             hybrid_search_engine = HybridSearchEngine(async_openai_client)
             
             # Initialize with embeddings cache in parent directory
@@ -140,7 +205,7 @@ async def lifespan(app: FastAPI):
             if kbji_raw_data:
                 print("🔨 Building KBJI BM25 index...")
                 kbji_bm25 = BM25()
-                kbji_bm25.fit(kbji_raw_data, text_fields=["judul", "deskripsi"])
+                kbji_bm25.fit(kbji_raw_data, text_fields=["search_text"])
 
                 print("🔨 Building KBJI Vector Store...")
                 kbji_vector_store = LocalVectorStore(
@@ -149,7 +214,7 @@ async def lifespan(app: FastAPI):
                 )
                 await kbji_vector_store.build_index(
                     kbji_raw_data,
-                    text_fields=["judul", "deskripsi"],
+                    text_fields=["judul", "search_aliases", "deskripsi"],
                     cache_dir=cache_dir
                 )
                 kbji_hybrid_ready = True
@@ -175,13 +240,57 @@ app = FastAPI(
 )
 
 # CORS for frontend
+default_origins = (
+    "https://kbli2025.alwansegeramutasi.my.id,"
+    "http://localhost:3001,http://127.0.0.1:3001"
+)
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOW_ORIGINS", default_origins).split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=allowed_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Accept", "Content-Type"],
 )
+
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+
+
+async def read_xlsx_upload(file: UploadFile) -> bytes:
+    """Validate an OOXML workbook before loading it fully into memory."""
+    filename = file.filename or ""
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Only .xlsx files are supported")
+
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB upload limit",
+        )
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded workbook is empty")
+    return content
+
+
+def load_xlsx(content: bytes, *, read_only: bool = False):
+    """Convert malformed workbook errors into a stable client-facing response."""
+    try:
+        return openpyxl.load_workbook(BytesIO(content), read_only=read_only)
+    except (InvalidFileException, BadZipFile, OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid or corrupted .xlsx workbook") from exc
+
+
+def safe_output_stem(filename: str | None) -> str:
+    """Return a filesystem-safe, bounded stem for a user supplied filename."""
+    basename = str(filename or "workbook").replace("\\", "/").rsplit("/", 1)[-1]
+    stem = basename.rsplit(".", 1)[0]
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._-")
+    return (cleaned or "workbook")[:80]
 
 def extract_kbli_codes(text: str) -> list[str]:
     """Extract potential KBLI codes from text using regex"""
@@ -225,11 +334,73 @@ def lookup_code(code: str) -> dict:
         "status": "not_found"
     }
 
+
+def format_code_matches(codes: list[str]) -> tuple[list[str], list[str], list[str]]:
+    """Format titles and hierarchies without leaking state between codes."""
+    titles = []
+    hierarchies = []
+    found_codes = []
+    for code in codes:
+        result = lookup_code(code)
+        if result["status"] == "found":
+            normalized_code = result["kode"]
+            found_codes.append(normalized_code)
+            titles.append(f"[{normalized_code}] {result['judul']}")
+            hierarchies.append(f"[{normalized_code}] {result['hierarki']}")
+        else:
+            titles.append(f"[{code}] Not Found")
+            hierarchies.append(f"[{code}] -")
+    return titles, hierarchies, found_codes
+
 def _tokenize_text(text: str) -> list[str]:
     """Tokenize Indonesian text for transparent local matching reasons."""
     if not text:
         return []
     return re.findall(r"\b[a-z0-9]{3,}\b", str(text).lower())
+
+
+def _feedback_terms(understanding: dict | None) -> list[str]:
+    """Collect stable intent terms without persisting the full LLM exchange."""
+    if not understanding:
+        return []
+    terms = understanding.get("core_terms", []) + understanding.get("context_terms", [])
+    return [str(term)[:80] for term in terms if str(term).strip()][:30]
+
+
+def attach_feedback_session(
+    taxonomy: str,
+    query: str,
+    results: list[dict],
+    method: str,
+    client_id: str | None = None,
+    understanding: dict | None = None,
+) -> tuple[list[dict], str, dict]:
+    """Apply prior judgments, then register exactly what the user was shown."""
+    terms = _feedback_terms(understanding)
+    ranked_results, learning = feedback_store.apply_feedback(
+        taxonomy,
+        query,
+        results,
+        client_id=client_id,
+        terms=terms,
+    )
+    candidate_codes = [
+        str(
+            result.get("code")
+            or result.get("kode_kbli")
+            or result.get("kode_kbji")
+            or ""
+        )
+        for result in ranked_results
+    ]
+    session_id = feedback_store.create_impression(
+        taxonomy,
+        query,
+        candidate_codes,
+        method,
+        terms=terms,
+    )
+    return ranked_results, session_id, learning
 
 LOCAL_QUERY_EXPANSIONS = [
     (("satpol pp", "polisi pamong praja", "satuan polisi pamong praja"), ["84119", "administrasi pemerintahan", "ketertiban umum", "penegakan perda"]),
@@ -240,12 +411,48 @@ LOCAL_QUERY_EXPANSIONS = [
     (("pangkas rambut", "potong rambut", "barbershop", "salon"), ["96210", "pangkas rambut", "penataan rambut"]),
     (("jualan pulsa", "konter pulsa", "pulsa"), ["61105", "jasa sistem komunikasi", "telekomunikasi"]),
     (("warung kelontong", "toko kelontong", "warung madura"), ["47111", "perdagangan eceran", "berbagai macam barang", "kelontong"]),
+    (
+        (
+            "es teler", "es doger", "es cincau", "es buah", "jus buah",
+            "jualan minuman", "penjual minuman", "minuman racikan",
+        ),
+        [
+            "56306", "56304", "56303", "penyediaan minuman",
+            "minuman siap dikonsumsi", "proses pembuatan", "kedai minuman",
+            "keliling", "tempat tidak tetap",
+        ],
+    ),
 ]
+
+KBJI_SCHOOL_DATA_TRIGGERS = (
+    "operator sekolah",
+    "operator dapodik",
+    "admin sekolah",
+    "administrasi sekolah",
+    "dapodik",
+    "data sekolah",
+    "data siswa",
+    "memutakhirkan data",
+    "memasukkan data siswa",
+)
 
 KBJI_QUERY_EXPANSIONS = [
     (
         ("satpol pp", "polisi pamong praja", "satuan polisi pamong praja"),
         ["5414", "penjaga keamanan", "petugas patroli keamanan", "ketertiban", "patroli", "penertiban", "pengamanan"],
+    ),
+    (
+        KBJI_SCHOOL_DATA_TRIGGERS,
+        [
+            "4132.01",
+            "4132.02",
+            "4110.00",
+            "operator entri data",
+            "petugas input data",
+            "tenaga perkantoran umum",
+            "data sekolah",
+            "administrasi sekolah",
+        ],
     ),
 ]
 
@@ -265,7 +472,7 @@ def expand_local_keywords(query: str) -> list[str]:
 def expand_kbji_keywords(query: str) -> list[str]:
     """Expand informal job terms into KBJI-friendly occupation keywords."""
     query_lower = str(query).lower()
-    keywords = _tokenize_text(query)
+    keywords = list(dict.fromkeys(_tokenize_text(query)))
 
     for triggers, expansions in KBJI_QUERY_EXPANSIONS:
         if any(trigger in query_lower for trigger in triggers):
@@ -333,25 +540,68 @@ def get_manual_kbji_classifications(query: str) -> list[dict]:
     """Curated KBJI results for terms that are not explicit KBJI titles."""
     query_lower = str(query).lower()
 
-    if any(term in query_lower for term in ("satpol pp", "polisi pamong praja", "satuan polisi pamong praja")):
-        entry = lookup_kbji_code("5414")
-        return [{
-            "code": entry.get("kode_kbji", "5414"),
-            "kode_kbji": entry.get("kode_kbji", "5414"),
-            "judul": entry.get("judul", "Penjaga Keamanan"),
+    def result(code: str, score: int, keywords: list[str], reasoning: str) -> dict:
+        entry = lookup_kbji_code(code)
+        return {
+            "code": entry.get("kode_kbji", code),
+            "kode_kbji": entry.get("kode_kbji", code),
+            "judul": entry.get("judul", ""),
             "deskripsi": entry.get("deskripsi", "")[:500],
             "source_page": entry.get("source_page"),
-            "level": entry.get("level", "subgolongan"),
-            "score": 98,
-            "matched_keywords": ["satpol pp", "ketertiban", "patroli", "penertiban", "pengamanan"],
-            "reasoning": (
+            "level": entry.get("level", "rinci"),
+            "score": score,
+            "matched_keywords": keywords,
+            "reasoning": reasoning,
+        }
+
+    if any(term in query_lower for term in ("satpol pp", "polisi pamong praja", "satuan polisi pamong praja")):
+        return [result(
+            "5414",
+            98,
+            ["satpol pp", "ketertiban", "patroli", "penertiban", "pengamanan"],
+            (
                 "Satpol PP bukan POLRI/TNI, sehingga tidak tepat dinaikkan ke Bintara POLRI. "
                 "Untuk KBJI, yang diklasifikasikan adalah pekerjaan/jabatan orangnya. Tugas "
                 "lapangan Satpol PP paling dekat dengan fungsi menjaga ketertiban, patroli, "
                 "pengamanan, dan penertiban. Dalam data KBJI lokal, kelompok terdekat adalah "
                 "5414 Penjaga Keamanan."
             ),
-        }]
+        )]
+
+    if any(term in query_lower for term in KBJI_SCHOOL_DATA_TRIGGERS):
+        return [
+            result(
+                "4132.01",
+                98,
+                ["operator", "entri data", "data sekolah"],
+                (
+                    "KBJI mengklasifikasikan tugas orangnya, sedangkan sekolah adalah tempat "
+                    "kerjanya. Operator sekolah umumnya memasukkan, memutakhirkan, memeriksa, "
+                    "dan mengirim data sekolah melalui sistem seperti Dapodik. Tugas tersebut "
+                    "paling dekat dengan KBJI 4132.01 Operator Entri Data."
+                ),
+            ),
+            result(
+                "4132.02",
+                93,
+                ["input data", "data sekolah"],
+                (
+                    "KBJI 4132.02 Petugas Input Data merupakan alternatif apabila pekerjaan "
+                    "lebih banyak berupa pencatatan dan pemeriksaan data sekolah, bukan "
+                    "pengelolaan administrasi kantor secara luas."
+                ),
+            ),
+            result(
+                "4110.00",
+                88,
+                ["administrasi sekolah", "tata usaha"],
+                (
+                    "KBJI 4110.00 Tenaga Perkantoran Umum lebih tepat apabila operator sekolah "
+                    "juga menangani surat, arsip, laporan, dan administrasi tata usaha. Pilihan "
+                    "akhir bergantung pada tugas yang paling dominan."
+                ),
+            ),
+        ]
 
     return []
 
@@ -372,31 +622,54 @@ def merge_manual_kbji_results(query: str, results: list[dict], limit: int) -> li
     return merged[:limit]
 
 def build_kbji_reasoning(query: str, result: dict, matched_keywords: list[str] | None = None) -> str:
-    keywords = matched_keywords or _tokenize_text(query)
     title = result.get("judul", "")
     code = result.get("kode_kbji", "")
     description = result.get("deskripsi", "")
-    matched = ", ".join(keywords[:5]) if keywords else "deskripsi jabatan"
+    searchable = " ".join([
+        str(title),
+        str(description),
+        str(result.get("search_aliases", "")),
+    ]).lower()
+    keywords = matched_keywords if matched_keywords is not None else [
+        token for token in _tokenize_text(query) if token in searchable
+    ]
+    if keywords:
+        evidence = f"kecocokan istilah {', '.join(keywords[:5])}"
+    else:
+        evidence = "kemiripan semantik dengan uraian tugas; kecocokan tugas tetap perlu diperiksa"
     return (
         f"Diklasifikasikan ke KBJI {code} - {title} karena KBJI mengklasifikasikan "
-        f"pekerjaan/jabatan orangnya, dan deskripsi jabatan ini paling dekat dengan input "
-        f"berdasarkan kecocokan konteks {matched}. Ringkasan cakupan KBJI: {description[:260]}"
+        f"pekerjaan/jabatan orangnya dan kandidat ditemukan berdasarkan {evidence}. "
+        f"Ringkasan cakupan KBJI: {description[:260]}"
     )
 
-def search_kbji_entries(query: str, limit: int = 5) -> list[dict]:
+def search_kbji_entries(
+    query: str,
+    limit: int = 5,
+    original_query: str | None = None,
+) -> list[dict]:
     """Local KBJI keyword search over parsed PDF data."""
     if not query or not kbji_raw_data:
         return []
 
     expanded_keywords = expand_kbji_keywords(query)
+    filter_query = original_query or query
+    query_terms = set(local_query_understanding(filter_query, "kbji")["core_terms"])
+    context_only_terms = {
+        "kantor", "pabrik", "pendidikan", "rumah", "sekolah", "toko", "universitas"
+    }
+    role_terms = query_terms - context_only_terms
+    requested_context = query_terms & context_only_terms
     results = []
 
     for entry in kbji_raw_data:
         code = str(entry.get("kode_kbji", ""))
         title = str(entry.get("judul", ""))
         description = str(entry.get("deskripsi", ""))
+        aliases = str(entry.get("search_aliases", ""))
         searchable_title = title.lower()
         searchable_description = description.lower()
+        searchable_aliases = aliases.lower()
 
         score = 0
         matched_keywords = []
@@ -411,6 +684,9 @@ def search_kbji_entries(query: str, limit: int = 5) -> list[dict]:
                 matched_keywords.append(keyword)
             elif code.startswith(kw) and kw.isdigit():
                 score += 2500
+                matched_keywords.append(keyword)
+            elif kw in searchable_aliases:
+                score += 1400
                 matched_keywords.append(keyword)
             elif kw in searchable_title:
                 score += 800
@@ -429,6 +705,25 @@ def search_kbji_entries(query: str, limit: int = 5) -> list[dict]:
             score += 50
 
         if score > 0:
+            matched_terms = {
+                token
+                for keyword in matched_keywords
+                for token in _tokenize_text(keyword)
+            }
+            # For a multi-concept query, a document matching only the workplace
+            # context (for example "sekolah") is not an occupation match.
+            if role_terms and not (matched_terms & role_terms):
+                continue
+            if requested_context and not (matched_terms & requested_context):
+                continue
+            matched_query_terms = matched_terms & query_terms
+            required_matches = (
+                len(query_terms)
+                if len(query_terms) <= 3
+                else max(2, (len(query_terms) + 1) // 2)
+            )
+            if query_terms and len(matched_query_terms) < required_matches:
+                continue
             result = {
                 "code": code,
                 "kode_kbji": code,
@@ -443,9 +738,17 @@ def search_kbji_entries(query: str, limit: int = 5) -> list[dict]:
             results.append(result)
 
     results.sort(key=lambda x: x["score"], reverse=True)
-    return merge_manual_kbji_results(query, results, limit)
+    if results:
+        minimum_score = max(300, results[0]["score"] * 0.35)
+        results = [result for result in results if result["score"] >= minimum_score]
+    return merge_manual_kbji_results(original_query or query, results, limit)
 
-async def search_kbji_hybrid_candidates(query: str, retrieval_top_k: int = 20) -> dict:
+async def search_kbji_hybrid_candidates(
+    query: str,
+    retrieval_top_k: int = 20,
+    retrieval_query: str | None = None,
+    semantic_query: str | None = None,
+) -> dict:
     """Retrieve KBJI candidates with BM25 keyword search + semantic vector search."""
     if not kbji_hybrid_ready or not kbji_bm25 or not kbji_vector_store:
         return {
@@ -455,8 +758,14 @@ async def search_kbji_hybrid_candidates(query: str, retrieval_top_k: int = 20) -
             "total_candidates": 0,
         }
 
-    bm25_task = asyncio.create_task(asyncio.to_thread(kbji_bm25.search, query, retrieval_top_k))
-    vector_task = asyncio.create_task(kbji_vector_store.search(query, retrieval_top_k))
+    local_expansion = " ".join(str(keyword) for keyword in expand_kbji_keywords(query))
+    expanded_query = f"{retrieval_query or query} {local_expansion}".strip()
+    bm25_task = asyncio.create_task(
+        asyncio.to_thread(kbji_bm25.search, expanded_query, retrieval_top_k)
+    )
+    vector_task = asyncio.create_task(
+        kbji_vector_store.search(semantic_query or query, retrieval_top_k)
+    )
     bm25_results, vector_results = await asyncio.gather(bm25_task, vector_task)
 
     fused_ranking = reciprocal_rank_fusion([bm25_results, vector_results], k=60)
@@ -498,6 +807,48 @@ def build_local_reasoning(query: str, result: dict, matched_keywords: list[str] 
     hierarchy = result.get("hierarki", "")
     scope = result.get("cakupan", "")
     code = result.get("code") or result.get("kode") or result.get("kode_kbli", "")
+
+    query_lower = str(query).lower()
+    fresh_drink_terms = (
+        "es teler", "es doger", "es cincau", "es buah", "jus buah",
+        "jualan minuman", "penjual minuman", "minuman racikan",
+    )
+    is_fresh_drink = (
+        any(term in query_lower for term in fresh_drink_terms)
+        or "minuman siap dikonsumsi" in query_lower
+        or ("teler" in query_lower and "minuman" in query_lower)
+    )
+    if is_fresh_drink:
+        contextual_reasons = {
+            "56306": (
+                "Input menunjukkan minuman yang diracik atau dibuat untuk langsung dikonsumsi, "
+                "bukan sekadar penjualan kembali minuman kemasan. KBLI 56306 paling dekat bila "
+                "penjualannya keliling atau memakai tempat tidak tetap; cakupannya juga memberi "
+                "contoh minuman es sejenis seperti es doger dan es cincau. Jika usaha menetap di "
+                "bangunan permanen, 56303 lebih tepat; jika berupa kedai/tenda bongkar-pasang, "
+                "pertimbangkan 56304."
+            ),
+            "56304": (
+                "Input menunjukkan penyajian minuman racikan siap konsumsi. KBLI 56304 sesuai "
+                "apabila usaha dijalankan sebagai kedai atau tenda bongkar-pasang, seperti kedai "
+                "jus. Bila berjualan keliling/tempat tidak tetap gunakan 56306, sedangkan bangunan "
+                "permanen lebih dekat ke 56303."
+            ),
+            "56303": (
+                "Input menunjukkan penyediaan minuman siap konsumsi. KBLI 56303 sesuai apabila "
+                "es teler disajikan dari rumah minum atau kafe di bangunan permanen. Bila model "
+                "usahanya kedai/tenda atau berkeliling, 56304 atau 56306 lebih tepat."
+            ),
+            "47222": (
+                "KBLI 47222 hanya tepat bila kegiatan utamanya menjual kembali minuman "
+                "nonalkohol dan tidak untuk langsung dikonsumsi di tempat. Karena es teler "
+                "umumnya diracik untuk langsung diminum, kode penyediaan minuman 56303-56306 "
+                "biasanya lebih kuat kecuali pengguna menjelaskan bahwa produknya hanya dijual "
+                "dalam kemasan."
+            ),
+        }
+        if code in contextual_reasons:
+            return f"Diklasifikasikan ke {code} - {title}. {contextual_reasons[code]}"
 
     searchable_title = title.lower()
     searchable_hierarchy = hierarchy.lower()
@@ -542,6 +893,13 @@ class LookupResponse(BaseModel):
     hierarki: str
     cakupan: str
 
+
+class FeedbackRequest(BaseModel):
+    session_id: str
+    client_id: str
+    selected_code: Optional[str] = None
+    no_match: bool = False
+
 @app.get("/")
 async def root():
     return {
@@ -561,6 +919,33 @@ async def health():
         "kbji_hybrid_ready": kbji_hybrid_ready
     }
 
+
+@app.post("/feedback")
+async def submit_feedback(request: FeedbackRequest):
+    """Record an explicit result selection or a no-match judgment."""
+    if len(request.session_id) > 64 or len(request.client_id) > 80:
+        raise HTTPException(status_code=400, detail="Invalid feedback payload")
+    if request.selected_code and len(request.selected_code) > 20:
+        raise HTTPException(status_code=400, detail="Invalid classification code")
+
+    try:
+        return feedback_store.save_feedback(
+            request.session_id,
+            request.client_id,
+            selected_code=request.selected_code,
+            no_match=request.no_match,
+        )
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.get("/feedback/stats")
+async def feedback_stats():
+    """Expose aggregate counts only; raw queries and client IDs stay private."""
+    return feedback_store.stats()
+
 @app.get("/stats")
 async def stats():
     """Get statistics about loaded KBLI data"""
@@ -571,7 +956,10 @@ async def stats():
     }
 
 @app.get("/search")
-async def search_kbli(q: str, limit: int = 10):
+async def search_kbli(
+    q: str = Query(min_length=2, max_length=200),
+    limit: int = Query(default=10, ge=1, le=50),
+):
     """
     Search KBLI by keyword in title, hierarchy, or description.
     Supports fuzzy matching.
@@ -622,7 +1010,10 @@ async def search_kbli(q: str, limit: int = 10):
     }
 
 @app.get("/autocomplete")
-async def autocomplete(q: str, limit: int = 5):
+async def autocomplete(
+    q: str = Query(min_length=1, max_length=100),
+    limit: int = Query(default=5, ge=1, le=20),
+):
     """
     Autocomplete suggestions for KBLI codes and titles.
     Returns quick suggestions as user types.
@@ -675,7 +1066,7 @@ async def expand_query_with_ai(query: str) -> dict:
     Use OpenAI to expand informal Indonesian query into KBLI terminology.
     Returns expanded keywords for better search matching.
     """
-    if not openai_client:
+    if not async_openai_client:
         keywords = expand_local_keywords(query)
         return {"expanded": query, "keywords": keywords or [query], "ai_used": False}
 
@@ -728,14 +1119,14 @@ Output: 494, angkutan jalan, pindahan
 """
 
     try:
-        response = openai_client.chat.completions.create(
-            model="gpt-5.4-mini-2026-03-17",
+        response = await async_openai_client.chat.completions.create(
+            model="gpt-5.6-terra",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Input: \"{query}\""}
             ],
-            max_tokens=60,
-            temperature=0  # Zero for strict instruction following
+            max_completion_tokens=600,
+            reasoning_effort=OPENAI_REASONING_EFFORT,
         )
         
         expanded = response.choices[0].message.content.strip()
@@ -753,11 +1144,12 @@ Output: 494, angkutan jalan, pindahan
         }
     except Exception as e:
         print(f"OpenAI error: {e}")
-        return {"expanded": query, "keywords": [query], "ai_used": False, "error": str(e)}
+        return {"expanded": query, "keywords": [query], "ai_used": False}
 
 def search_with_keywords(keywords: list[str], limit: int = 10) -> list[dict]:
     """Search KBLI using multiple keywords with advanced scoring"""
     results = []
+    has_code_hint = any(str(keyword).strip().isdigit() for keyword in keywords)
     
     for code, info in kbli_lookup.items():
         judul_lower = info['judul'].lower()
@@ -822,14 +1214,22 @@ def search_with_keywords(keywords: list[str], limit: int = 10) -> list[dict]:
         if full_query in judul_lower:
             score += 2000  # Huge bonus for exact phrase
         
-        if score > 0:
+        unique_matches = list(dict.fromkeys(matched_keywords))
+        direct_code_match = any(
+            str(keyword).strip().isdigit() and code.startswith(str(keyword).strip())
+            for keyword in keywords
+        )
+
+        # Curated expansions contain a strong code hint. Avoid returning documents
+        # that matched only one generic word such as "makan" or "barang".
+        if score > 0 and (not has_code_hint or direct_code_match or len(unique_matches) >= 2):
             result = {
                 "code": code,
                 "judul": info["judul"],
                 "hierarki": info["hierarki"],
                 "cakupan": info.get("cakupan", "")[:200],
                 "score": score,
-                "matched_keywords": list(set(matched_keywords))  # Remove duplicates
+                "matched_keywords": unique_matches
             }
             result["reasoning"] = build_local_reasoning(
                 " ".join(keywords),
@@ -860,7 +1260,11 @@ def merge_manual_results(query: str, results: list[dict], limit: int) -> list[di
     return merged[:limit]
 
 @app.get("/search/smart")
-async def smart_search(q: str, limit: int = 10):
+async def smart_search(
+    q: str = Query(min_length=2, max_length=200),
+    limit: int = Query(default=10, ge=1, le=20),
+    client_id: Optional[str] = Query(default=None, max_length=80),
+):
     """
     AI-Enhanced Smart Search.
     Uses GPT to translate informal queries into KBLI terminology.
@@ -879,19 +1283,36 @@ async def smart_search(q: str, limit: int = 10):
     # Step 2: Search with expanded keywords
     results = search_with_keywords(expansion["keywords"], limit)
     results = merge_manual_results(q, results, limit)
+    method = "smart" if expansion.get("ai_used") else "local_keyword"
+    understanding = local_query_understanding(q, "kbli")
+    results, feedback_session_id, feedback_learning = attach_feedback_session(
+        "kbli",
+        q,
+        results,
+        method,
+        client_id=client_id,
+        understanding=understanding,
+    )
     
     return {
         "query": q,
-        "method": "smart" if expansion.get("ai_used") else "local_keyword",
+        "method": method,
         "expansion": expansion,
         "total": len(results),
-        "results": results
+        "results": results,
+        "feedback_session_id": feedback_session_id,
+        "feedback_learning": feedback_learning,
     }
 
-async def rerank_kbji_candidates(query: str, candidates: list[dict], top_k: int = 5) -> list[dict]:
-    """Re-rank KBJI candidates using LLM."""
+async def rerank_kbji_candidates(
+    query: str,
+    candidates: list[dict],
+    top_k: int = 5,
+    query_context: str = "",
+) -> tuple[list[dict], bool]:
+    """Re-rank KBJI candidates and report whether the LLM result was used."""
     if not candidates or not async_openai_client:
-        return candidates[:top_k]
+        return candidates[:top_k], False
     
     candidates = candidates[:15]
     candidate_str = "\n".join([
@@ -905,7 +1326,10 @@ ATURAN PENTING:
 1. Fokus pada pekerjaan/jabatan.
 2. Perhatikan konteks informal. Misal "satpol pp" relevan dengan "Polisi pamong praja" atau "kepala wilayah / ketentraman".
 3. Satpol PP/Polisi Pamong Praja BUKAN POLRI/TNI. Jangan memilih Bintara POLRI, Perwira POLRI, atau jabatan TNI kecuali query eksplisit menyebut POLRI/TNI.
-4. Berikan skor (0.0 - 1.0) dan alasan singkat. Hanya sertakan kandidat relevan (relevance > 0.3).
+4. Pada frasa seperti "operator sekolah", kata "operator" adalah tugas dan "sekolah" adalah konteks tempat kerja. Utamakan entri/input data atau administrasi, bukan kepala, pengawas, atau guru sekolah.
+5. Kandidat yang hanya cocok pada konteks tempat kerja tetapi tidak cocok pada tugas harus dibuang.
+6. Berikan skor (0.0 - 1.0). Hanya sertakan kandidat relevan (relevance > 0.3).
+7. Alasan harus 2-4 kalimat: jelaskan tugas utama, kecocokan dengan deskripsi KBJI, pembeda dari kandidat terdekat, dan konteks yang masih perlu dikonfirmasi. Jangan hanya menyebut kemiripan kata.
 
 OUTPUT FORMAT (JSON only, no markdown):
 {
@@ -914,24 +1338,31 @@ OUTPUT FORMAT (JSON only, no markdown):
       "rank": 1,
       "index": <nomor kandidat 1-based>,
       "relevance": <0.0-1.0>,
-      "reason": "<alasan>"
+      "reason": "<alasan substantif 2-4 kalimat>"
     }
   ]
 }"""
 
-    user_prompt = f'Query: "{query}"\n\nKandidat KBJI:\n{candidate_str}\n\nOutput JSON saja.'
+    user_prompt = (
+        f'Query asli: "{query}"\n'
+        f'Analisis query: {query_context or "-"}\n\n'
+        f'Kandidat KBJI:\n{candidate_str}\n\nOutput JSON saja.'
+    )
     
     try:
         response = await async_openai_client.chat.completions.create(
-            model="gpt-5.4-mini-2026-03-17",
+            model=KBJI_RERANK_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0,
-            max_completion_tokens=1000
+            reasoning_effort=OPENAI_REASONING_EFFORT,
+            max_completion_tokens=1800,
+            response_format={"type": "json_object"},
         )
-        content = response.choices[0].message.content.strip()
+        content = (response.choices[0].message.content or "").strip()
+        if not content:
+            raise ValueError("KBJI reranker returned an empty response")
         import re
         if "```" in content:
             match = re.search(r'```(?:json)?\s*(.*?)```', content, re.DOTALL)
@@ -942,59 +1373,123 @@ OUTPUT FORMAT (JSON only, no markdown):
         rankings = result.get("rankings", [])
         
         reranked = []
+        seen_indices = set()
         for r in rankings[:top_k]:
             idx = r.get("index", 1) - 1
-            if 0 <= idx < len(candidates):
+            relevance = float(r.get("relevance", 0.0))
+            if 0 <= idx < len(candidates) and idx not in seen_indices and relevance > 0.3:
+                seen_indices.add(idx)
                 candidate = candidates[idx].copy()
-                candidate["score"] = r.get("relevance", 0.0) * 100
+                candidate["score"] = round(relevance * 100, 2)
                 candidate["reasoning"] = f"Diklasifikasikan ke KBJI {candidate['kode_kbji']} karena {r.get('reason', '')}"
                 reranked.append(candidate)
-        return reranked if reranked else candidates[:top_k]
+        return (reranked, True) if reranked else (candidates[:top_k], False)
     except Exception as e:
         print(f"KBJI Reranking error: {e}")
-        return candidates[:top_k]
+        return candidates[:top_k], False
 
 @app.get("/search/kbji")
-async def kbji_search(q: str, limit: int = 5):
+async def kbji_search(
+    q: str = Query(min_length=2, max_length=200),
+    limit: int = Query(default=5, ge=1, le=20),
+    client_id: Optional[str] = Query(default=None, max_length=80),
+):
     """
     Search KBJI occupations using hybrid retrieval when available.
     """
     if not q or len(q) < 2:
         return {"query": q, "method": "kbji_local_keyword", "total": 0, "results": []}
 
+    curated_results = get_manual_kbji_classifications(q)
+    if curated_results:
+        results = curated_results[:limit]
+        understanding = local_query_understanding(q, "kbji")
+        results, feedback_session_id, feedback_learning = attach_feedback_session(
+            "kbji",
+            q,
+            results,
+            "kbji_curated",
+            client_id=client_id,
+            understanding=understanding,
+        )
+        return {
+            "query": q,
+            "method": "kbji_curated",
+            "rerank_status": "curated",
+            "bm25_results": 0,
+            "vector_results": 0,
+            "total_candidates_evaluated": len(curated_results),
+            "total": len(results),
+            "results": results,
+            "feedback_session_id": feedback_session_id,
+            "feedback_learning": feedback_learning,
+        }
+
+    understanding = await query_understanding_service.analyze(q, "kbji")
+    retrieval_query, semantic_query, rerank_context = build_retrieval_queries(
+        q,
+        understanding,
+    )
+
     bm25_top = 0
     vector_top = 0
     total_candidates = 0
 
     if kbji_hybrid_ready:
-        retrieval = await search_kbji_hybrid_candidates(q, retrieval_top_k=20)
+        retrieval = await search_kbji_hybrid_candidates(
+            q,
+            retrieval_top_k=20,
+            retrieval_query=retrieval_query,
+            semantic_query=semantic_query,
+        )
         candidates = retrieval["results"]
         bm25_top = retrieval["bm25_top"]
         vector_top = retrieval["vector_top"]
         total_candidates = retrieval["total_candidates"]
         base_method = "kbji_hybrid"
     else:
-        candidates = search_kbji_entries(q, limit=15)
+        candidates = search_kbji_entries(
+            retrieval_query,
+            limit=15,
+            original_query=q,
+        )
         base_method = "kbji_local_keyword"
 
-    if get_manual_kbji_classifications(q):
-        results = merge_manual_kbji_results(q, candidates, limit)
-        method = f"{base_method}_curated"
-    elif async_openai_client:
-        results = await rerank_kbji_candidates(q, candidates, limit)
-        method = f"{base_method}_llm_reranked"
+    if async_openai_client:
+        results, reranked = await rerank_kbji_candidates(
+            q,
+            candidates,
+            limit,
+            query_context=rerank_context,
+        )
+        method = f"{base_method}_llm_reranked" if reranked else f"{base_method}_rerank_fallback"
+        rerank_status = "success" if reranked else "fallback"
     else:
         results = candidates[:limit]
         method = base_method
+        rerank_status = "disabled"
+
+    results, feedback_session_id, feedback_learning = attach_feedback_session(
+        "kbji",
+        q,
+        results,
+        method,
+        client_id=client_id,
+        understanding=understanding,
+    )
 
     return {
         "query": q,
         "method": method,
+        "rerank_status": rerank_status,
+        "query_understanding": understanding,
         "bm25_results": bm25_top,
         "vector_results": vector_top,
         "total_candidates_evaluated": total_candidates,
         "total": len(results),
         "results": results,
+        "feedback_session_id": feedback_session_id,
+        "feedback_learning": feedback_learning,
     }
 
 @app.get("/search/kbji/status")
@@ -1003,10 +1498,15 @@ async def kbji_search_status():
     return {
         "status": "ready" if kbji_raw_data else "not_ready",
         "documents_indexed": len(kbji_raw_data),
+        "detailed_jobs": sum(entry.get("level") == "rinci" for entry in kbji_raw_data),
+        "subgroups": sum(entry.get("level") == "subgolongan" for entry in kbji_raw_data),
+        "aliased_documents": sum(bool(entry.get("search_aliases")) for entry in kbji_raw_data),
         "bm25_ready": bool(kbji_bm25),
         "bm25_terms": len(kbji_bm25.idf) if kbji_bm25 else 0,
         "vector_store_ready": bool(kbji_vector_store and kbji_vector_store.is_ready),
         "hybrid_ready": kbji_hybrid_ready,
+        "rerank_model": KBJI_RERANK_MODEL if async_openai_client else None,
+        "query_understanding_model": QUERY_UNDERSTANDING_MODEL if async_openai_client else None,
         "embedding_model": (
             kbji_vector_store.EMBEDDING_MODEL
             if kbji_vector_store and kbji_vector_store.is_ready
@@ -1015,7 +1515,10 @@ async def kbji_search_status():
     }
 
 @app.get("/autocomplete/smart")
-async def smart_autocomplete(q: str, limit: int = 5):
+async def smart_autocomplete(
+    q: str = Query(min_length=2, max_length=100),
+    limit: int = Query(default=5, ge=1, le=20),
+):
     """
     AI-Enhanced Autocomplete.
     Uses semantic understanding to provide better suggestions.
@@ -1051,9 +1554,10 @@ async def smart_autocomplete(q: str, limit: int = 5):
 
 @app.get("/search/hybrid")
 async def hybrid_search(
-    q: str, 
-    top_k: int = 5,
-    use_reranking: bool = True
+    q: str = Query(min_length=2, max_length=200),
+    top_k: int = Query(default=5, ge=1, le=10),
+    use_reranking: bool = True,
+    client_id: Optional[str] = Query(default=None, max_length=80),
 ):
     """
     🚀 Hybrid Search - Best accuracy for KBLI classification.
@@ -1088,14 +1592,38 @@ async def hybrid_search(
     
     if not hybrid_search_engine:
         # Fallback to smart search if hybrid not available
-        return await smart_search(q, limit=top_k)
+        return await smart_search(q, limit=top_k, client_id=client_id)
     
     try:
+        understanding = await query_understanding_service.analyze(q, "kbli")
+        retrieval_query, semantic_query, rerank_context = build_retrieval_queries(
+            q,
+            understanding,
+        )
+
+        # Hybrid retrieval previously skipped the deterministic informal-term
+        # expansions used by smart search. Numeric hints stay in keyword search;
+        # descriptive terms enrich both sparse and semantic retrieval here.
+        local_terms = [
+            term for term in expand_local_keywords(q)
+            if term and not str(term).isdigit()
+        ]
+        if local_terms:
+            local_context = " ".join(dict.fromkeys(local_terms))
+            retrieval_query = f"{retrieval_query} {local_context}".strip()
+            semantic_query = f"{semantic_query}\n{local_context}".strip()
+            rerank_context = (
+                f"{rerank_context}. Istilah KBLI lokal terkait: {local_context}"
+            )
+
         # Perform hybrid search
         result = await hybrid_search_engine.search(
             query=q,
             top_k=top_k,
-            use_reranking=use_reranking
+            use_reranking=use_reranking,
+            retrieval_query=retrieval_query,
+            semantic_query=semantic_query,
+            query_context=rerank_context,
         )
         
         # Format results for API response
@@ -1114,21 +1642,33 @@ async def hybrid_search(
             formatted_results.append(formatted)
 
         formatted_results = merge_manual_results(q, formatted_results, top_k)
+        formatted_results, feedback_session_id, feedback_learning = attach_feedback_session(
+            "kbli",
+            q,
+            formatted_results,
+            "hybrid",
+            client_id=client_id,
+            understanding=understanding,
+        )
         
         return {
             "query": q,
             "method": "hybrid",
+            "query_understanding": understanding,
             "total_candidates_evaluated": result.get("total_candidates", 0),
             "bm25_results": result.get("bm25_top", 0),
             "vector_results": result.get("vector_top", 0),
             "use_reranking": use_reranking,
-            "results": formatted_results
+            "rerank_status": result.get("rerank_status", "unknown"),
+            "results": formatted_results,
+            "feedback_session_id": feedback_session_id,
+            "feedback_learning": feedback_learning,
         }
         
     except Exception as e:
         print(f"Hybrid search error: {e}")
         # Fallback to smart search on error
-        return await smart_search(q, limit=top_k)
+        return await smart_search(q, limit=top_k, client_id=client_id)
 
 @app.get("/search/hybrid/status")
 async def hybrid_search_status():
@@ -1142,6 +1682,8 @@ async def hybrid_search_status():
             "bm25_terms": len(hybrid_search_engine.bm25.idf),
             "vector_store_ready": hybrid_search_engine.vector_store.is_ready,
             "embedding_model": hybrid_search_engine.vector_store.EMBEDDING_MODEL,
+            "kbli_rerank_model": hybrid_search_engine.reranker.model,
+            "query_understanding_model": QUERY_UNDERSTANDING_MODEL,
             "kbji_status": "ready" if kbji_hybrid_ready else "not_ready",
             "kbji_documents_indexed": len(kbji_raw_data) if kbji_hybrid_ready else 0,
             "kbji_bm25_terms": len(kbji_bm25.idf) if kbji_bm25 else 0,
@@ -1216,11 +1758,8 @@ async def upload_preview(file: UploadFile = File(...)):
     Upload Excel file and return column headers + preview.
     Does NOT process yet.
     """
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Only Excel files supported (.xlsx, .xls)")
-    
-    content = await file.read()
-    wb = openpyxl.load_workbook(BytesIO(content), read_only=True)
+    content = await read_xlsx_upload(file)
+    wb = await asyncio.to_thread(load_xlsx, content, read_only=True)
     sheet = wb.active
     
     # Get headers (first row)
@@ -1233,10 +1772,8 @@ async def upload_preview(file: UploadFile = File(...)):
     for i, row in enumerate(sheet.iter_rows(min_row=2, max_row=6, values_only=True)):
         sample_rows.append(list(row))
     
-    # Count total rows
-    total_rows = 0
-    for _ in sheet.iter_rows(min_row=2, values_only=True):
-        total_rows += 1
+    # read_only worksheets already expose the parsed worksheet bounds.
+    total_rows = max(sheet.max_row - 1, 0)
     
     wb.close()
     
@@ -1257,11 +1794,8 @@ async def lookup_batch(
     Pattern matching - fast and scalable.
     Returns Excel file directly.
     """
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Only Excel files supported")
-    
-    content = await file.read()
-    wb = openpyxl.load_workbook(BytesIO(content))
+    content = await read_xlsx_upload(file)
+    wb = await asyncio.to_thread(load_xlsx, content)
     sheet = wb.active
     
     # Find column index
@@ -1307,19 +1841,8 @@ async def lookup_batch(
             
             if codes:
                 # Lookup ALL codes
-                juduls = []
-                hierarkis = []
-                found_any = False
-                
-                for code in codes:
-                    result = lookup_code(code)
-                    if result["status"] == "found":
-                        juduls.append(f"[{code}] {result['judul']}")
-                        hierarkis.append(f"[{code}] {result['hierarki']}")
-                        found_any = True
-                    else:
-                        juduls.append(f"[{code}] Not Found")
-                        hierarkis.append(f"[{code}] -")
+                juduls, hierarkis, valid_codes = format_code_matches(codes)
+                found_any = bool(valid_codes)
                 
                 # Join with newlines
                 sheet.cell(row=row_idx, column=result_col_judul, value="\n".join(juduls))
@@ -1330,7 +1853,7 @@ async def lookup_batch(
                 sheet.cell(row=row_idx, column=result_col_hierarki).alignment = Alignment(wrap_text=True)
                 
                 if found_any:
-                    status_text = f"Found ({len(juduls)})"
+                    status_text = f"Found ({len(valid_codes)}/{len(codes)})"
                     sheet.cell(row=row_idx, column=result_col_status, value=status_text)
                     sheet.cell(row=row_idx, column=result_col_status).font = Font(color="22C55E")
                     found_count += 1
@@ -1354,12 +1877,12 @@ async def lookup_batch(
     
     # Save to BytesIO
     output = BytesIO()
-    wb.save(output)
+    await asyncio.to_thread(wb.save, output)
     output.seek(0)
     wb.close()
     
     # Generate filename
-    original_name = Path(file.filename).stem
+    original_name = safe_output_stem(file.filename)
     result_filename = f"{original_name}_KBLI_result.xlsx"
     
     return StreamingResponse(
@@ -1377,18 +1900,23 @@ async def lookup_batch(
 # Create temp directory for downloads
 TEMP_DIR = Path(__file__).parent / "temp_downloads"
 TEMP_DIR.mkdir(exist_ok=True)
+TEMP_DIR_RESOLVED = TEMP_DIR.resolve()
 
 @app.get("/download/{filename}")
 async def download_file(filename: str):
     """Download generated result file"""
-    file_path = TEMP_DIR / filename
-    if not file_path.exists():
+    if Path(filename).name != filename or not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Invalid download filename")
+
+    file_path = (TEMP_DIR / filename).resolve()
+    if file_path.parent != TEMP_DIR_RESOLVED or not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     
     return FileResponse(
         file_path, 
         filename=filename,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        background=BackgroundTask(file_path.unlink, missing_ok=True),
     )
 
 @app.post("/lookup/batch-stream")
@@ -1400,16 +1928,13 @@ async def lookup_batch_stream(
     Process Excel with SSE streaming for progress updates.
     Returns progress events, then saves file and returns download URL.
     """
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Only Excel files supported")
-    
-    content = await file.read()
+    content = await read_xlsx_upload(file)
     
     # Store filename for later use
     original_filename = file.filename
+    wb = await asyncio.to_thread(load_xlsx, content)
 
     async def generate():
-        wb = openpyxl.load_workbook(BytesIO(content))
         sheet = wb.active
         
         # Find column index
@@ -1444,22 +1969,17 @@ async def lookup_batch_stream(
             if cell_value:
                 codes = extract_kbli_codes(str(cell_value))
                 if codes:
-                    # Lookup logic (simplified for brevity in this replace block, but actual logic remains)
-                    juduls = []
-                    valid_codes = []
-                    found_any = False
-                    
-                    for code in codes:
-                        res = lookup_code(code)
-                        if res["status"] == "found":
-                            found_any = True
-                            valid_codes.append(res["kode"])
-                            juduls.append(f"[{res['kode']}] {res['judul']}")
+                    juduls, hierarkis, valid_codes = format_code_matches(codes)
+                    found_any = bool(valid_codes)
                     
                     if found_any:
                         sheet.cell(row=row_idx, column=result_col_judul, value="; ".join(juduls))
-                        sheet.cell(row=row_idx, column=result_col_hierarki, value=res.get("hierarki", ""))
-                        sheet.cell(row=row_idx, column=result_col_status, value="Found")
+                        sheet.cell(row=row_idx, column=result_col_hierarki, value="; ".join(hierarkis))
+                        sheet.cell(
+                            row=row_idx,
+                            column=result_col_status,
+                            value=f"Found ({len(valid_codes)}/{len(codes)})",
+                        )
                         found_count += 1
                         result_info = {"code": valid_codes[0], "judul": juduls[0], "status": "found"}
                     else:
@@ -1468,6 +1988,7 @@ async def lookup_batch_stream(
                         result_info = {"code": f"{len(codes)} codes", "judul": "", "status": "not_found"}
                 else:
                      sheet.cell(row=row_idx, column=result_col_status, value="No Code")
+                     not_found_count += 1
             else:
                  sheet.cell(row=row_idx, column=result_col_status, value="Empty")
 
@@ -1476,11 +1997,11 @@ async def lookup_batch_stream(
                 yield f"data: {json.dumps({'type': 'progress', 'current': current, 'total': total_rows, 'found': found_count, 'not_found': not_found_count, 'latest': result_info})}\n\n"
         
         # Save to TEMP file instead of returning base64
-        original_name_stem = Path(original_filename).stem
-        result_filename = f"{original_name_stem}_RESULT.xlsx"
+        original_name_stem = safe_output_stem(original_filename)
+        result_filename = f"{original_name_stem}_{uuid4().hex[:12]}_RESULT.xlsx"
         save_path = TEMP_DIR / result_filename
         
-        wb.save(save_path)
+        await asyncio.to_thread(wb.save, save_path)
         wb.close()
         
         # Return download URL instead of file content
