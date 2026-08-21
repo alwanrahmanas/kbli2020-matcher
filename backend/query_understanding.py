@@ -3,6 +3,7 @@
 import asyncio
 import copy
 import json
+import os
 import re
 import time
 from collections import OrderedDict
@@ -90,18 +91,32 @@ class QueryUnderstandingService:
     ):
         self.client = client
         self.model = model
+        self.reasoning_effort = os.getenv("OPENAI_REASONING_EFFORT", "high")
         self.cache_ttl = cache_ttl
         self.cache_size = cache_size
         self._cache: OrderedDict[tuple[str, str], tuple[float, dict]] = OrderedDict()
         self._inflight: dict[tuple[str, str], asyncio.Task] = {}
 
     @staticmethod
+    def needs_llm(query: str) -> bool:
+        """Use semantic interpretation for natural-language phrases, including short ones."""
+        normalized = " ".join(str(query).lower().split())
+        if not normalized or re.fullmatch(r"[\d.\s]+", normalized):
+            return False
+
+        # Short informal phrases such as "penjual es teler" carry an activity and
+        # an object even though they do not meet the old seven-token threshold.
+        surface_tokens = re.findall(r"\b[a-z0-9]{2,}\b", normalized)
+        return len(surface_tokens) >= 2 or len(normalized) >= 70
+
+    @staticmethod
     def is_detailed(query: str) -> bool:
-        return len(_tokens(query)) >= 7 or len(str(query).strip()) >= 70
+        """Backward-compatible alias retained for callers and older tests."""
+        return QueryUnderstandingService.needs_llm(query)
 
     async def analyze(self, query: str, taxonomy: str) -> dict:
         fallback = local_query_understanding(query, taxonomy)
-        if not self.client or not self.is_detailed(query):
+        if not self.client or not self.needs_llm(query):
             return fallback
 
         key = (taxonomy, " ".join(str(query).lower().split()))
@@ -159,7 +174,7 @@ Keluarkan JSON dengan tepat lima field:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": str(query)},
                 ],
-                temperature=0,
+                reasoning_effort=self.reasoning_effort,
                 max_completion_tokens=700,
                 response_format={"type": "json_object"},
             )

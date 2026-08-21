@@ -10,9 +10,11 @@ from backend.query_understanding import (
 class FakeChatCompletions:
     def __init__(self):
         self.calls = 0
+        self.last_kwargs = None
 
     async def create(self, **kwargs):
         self.calls += 1
+        self.last_kwargs = kwargs
 
         class Message:
             content = """{
@@ -68,13 +70,22 @@ class QueryUnderstandingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first, second)
         self.assertEqual(first["method"], "llm")
         self.assertEqual(client.chat.completions.calls, 1)
+        self.assertEqual(client.chat.completions.last_kwargs["reasoning_effort"], "high")
+        self.assertNotIn("temperature", client.chat.completions.last_kwargs)
         self.assertIn("pengolahan ikan", first["core_terms"])
 
-    async def test_short_query_stays_local(self):
+    async def test_short_natural_language_query_uses_llm(self):
         client = FakeClient()
         service = QueryUnderstandingService(client, model="test-model")
-        result = await service.analyze("warung makan", "kbli")
-        self.assertEqual(result, local_query_understanding("warung makan", "kbli"))
+        result = await service.analyze("penjual es teler", "kbli")
+        self.assertEqual(result["method"], "llm")
+        self.assertEqual(client.chat.completions.calls, 1)
+
+    async def test_single_term_query_stays_local(self):
+        client = FakeClient()
+        service = QueryUnderstandingService(client, model="test-model")
+        result = await service.analyze("akuntan", "kbji")
+        self.assertEqual(result, local_query_understanding("akuntan", "kbji"))
         self.assertEqual(client.chat.completions.calls, 0)
 
 

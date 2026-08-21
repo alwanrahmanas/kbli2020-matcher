@@ -134,6 +134,7 @@ Optional environment variables:
 ```env
 OPENAI_TIMEOUT_SECONDS=30
 OPENAI_MODEL=gpt-5.6-terra
+OPENAI_REASONING_EFFORT=high
 # Optional overrides:
 # QUERY_UNDERSTANDING_MODEL=gpt-5.6-terra
 # KBLI_RERANK_MODEL=gpt-5.6-terra

@@ -436,6 +436,7 @@ class SemanticReranker:
             or os.getenv("OPENAI_MODEL")
             or "gpt-5.6-terra"
         )
+        self.reasoning_effort = os.getenv("OPENAI_REASONING_EFFORT", "high")
     
     async def rerank(
         self, 
@@ -467,14 +468,15 @@ class SemanticReranker:
             for i, c in enumerate(candidates)
         ])
         
-        system_prompt = """Anda adalah ahli klasifikasi KBLI 2020 BPS Indonesia.
+        system_prompt = """Anda adalah ahli klasifikasi KBLI 2025 BPS Indonesia.
 Tugas: Evaluasi relevansi setiap kandidat KBLI terhadap query pengguna.
 
 ATURAN PENTING:
 1. Fokus pada AKTIVITAS UTAMA yang dimaksud user
 2. Bedakan: PERDAGANGAN (jual beli) vs INDUSTRI (produksi) vs JASA (layanan)
 3. Perhatikan konteks informal bahasa Indonesia
-4. Istilah profesi (PNS, ASN, PPPK, Satpol PP, Pegawai, dll) BUKANLAH suatu entitas bisnis atau lapangan usaha. Jika pengguna mencari ini, berikan 'relevance' 0 pada semua kandidat KBLI, dan tuliskan "BUKAN KBLI (Profesi bukan lapangan usaha)" pada 'reasoning'.
+4. Untuk makanan/minuman siap dikonsumsi, bedakan pembuatan/penyajian dari penjualan kembali produk kemasan. Perhatikan tempat permanen, kedai/tenda, dan keliling/tempat tidak tetap.
+5. Istilah profesi (PNS, ASN, PPPK, Satpol PP, Pegawai, dll) BUKANLAH suatu entitas bisnis atau lapangan usaha. Jika pengguna mencari ini, berikan 'relevance' 0 pada semua kandidat KBLI, dan tuliskan "BUKAN KBLI (Profesi bukan lapangan usaha)" pada 'reasoning'.
 
 OUTPUT FORMAT (JSON only, no markdown):
 {
@@ -483,13 +485,14 @@ OUTPUT FORMAT (JSON only, no markdown):
       "rank": 1,
       "index": <nomor kandidat 1-based>,
       "relevance": <0.0-1.0>,
-      "reason": "<alasan singkat>"
+      "reason": "<2-4 kalimat yang menjelaskan aktivitas utama, kecocokan cakupan, pembeda kandidat terdekat, dan asumsi yang perlu dikonfirmasi>"
     },
     ...
   ]
 }
 
-Urutkan berdasarkan relevansi tertinggi. Hanya sertakan kandidat yang RELEVAN (relevance > 0.3)."""
+Urutkan berdasarkan relevansi tertinggi. Hanya sertakan kandidat yang RELEVAN (relevance > 0.3).
+Alasan tidak boleh sekadar menyebut kemiripan kata. Jelaskan hubungan substantif antara input dan definisi KBLI serta mengapa alternatif perdagangan/industri/jasa lain kurang tepat."""
 
         user_prompt = f"""Query asli: "{query}"
 Analisis query: {query_context or '-'}
@@ -506,8 +509,8 @@ Evaluasi dan ranking berdasarkan relevansi. Output JSON saja."""
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0,
-                max_completion_tokens=1000,
+                reasoning_effort=self.reasoning_effort,
+                max_completion_tokens=1800,
                 response_format={"type": "json_object"},
             )
             

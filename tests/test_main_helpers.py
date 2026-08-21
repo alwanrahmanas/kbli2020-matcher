@@ -22,6 +22,13 @@ class MainHelperTests(unittest.TestCase):
                 "cakupan": "",
                 "metadata": {},
             },
+            "56306": {
+                "kode": "56306",
+                "judul": "AKTIVITAS PENYEDIAAN MINUMAN KELILING/TEMPAT TIDAK TETAP",
+                "hierarki": "AKTIVITAS PENYEDIAAN MINUMAN",
+                "cakupan": "Minuman siap dikonsumsi seperti es doger dan es cincau.",
+                "metadata": {},
+            },
         })
 
     def tearDown(self):
@@ -49,6 +56,34 @@ class MainHelperTests(unittest.TestCase):
             main.extract_kbli_codes("11111, 22222, lalu 11111"),
             ["11111", "22222"],
         )
+
+    def test_informal_fresh_drink_expansion_prioritizes_contextual_codes(self):
+        expanded = main.expand_local_keywords("penjual es teler")
+        self.assertIn("56306", expanded)
+        self.assertIn("56304", expanded)
+        self.assertIn("minuman siap dikonsumsi", expanded)
+
+    def test_fresh_drink_reasoning_explains_assumption_and_alternatives(self):
+        reasoning = main.build_local_reasoning(
+            "penjual es teler",
+            {
+                "code": "56306",
+                "judul": "AKTIVITAS PENYEDIAAN MINUMAN KELILING/TEMPAT TIDAK TETAP",
+                "hierarki": "AKTIVITAS PENYEDIAAN MINUMAN",
+                "cakupan": "Minuman siap dikonsumsi seperti es doger dan es cincau.",
+            },
+        )
+        self.assertIn("diracik atau dibuat", reasoning)
+        self.assertIn("56303", reasoning)
+        self.assertIn("56304", reasoning)
+
+    def test_fresh_drink_keyword_search_keeps_contextual_reasoning(self):
+        results = main.search_with_keywords(
+            main.expand_local_keywords("penjual es teler"),
+            limit=5,
+        )
+        self.assertEqual(results[0]["code"], "56306")
+        self.assertIn("diracik atau dibuat", results[0]["reasoning"])
 
 
 class KbjiSearchTests(unittest.TestCase):

@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from backend.hybrid_search import BM25, HybridSearchEngine, LocalVectorStore
+from backend.hybrid_search import BM25, HybridSearchEngine, LocalVectorStore, SemanticReranker
 
 
 class FakeEmbeddings:
@@ -28,6 +28,31 @@ class FakeEmbeddings:
 class FakeClient:
     def __init__(self):
         self.embeddings = FakeEmbeddings()
+
+
+class FakeRerankCompletions:
+    def __init__(self):
+        self.last_kwargs = None
+
+    async def create(self, **kwargs):
+        self.last_kwargs = kwargs
+
+        class Message:
+            content = '{"rankings":[{"rank":1,"index":1,"relevance":0.95,"reason":"Aktivitas dan cakupan sesuai. Alternatif lain kurang tepat."}]}'
+
+        class Choice:
+            message = Message()
+
+        class Response:
+            choices = [Choice()]
+
+        return Response()
+
+
+class FakeRerankClient:
+    def __init__(self):
+        self.completions = FakeRerankCompletions()
+        self.chat = type("Chat", (), {"completions": self.completions})()
 
 
 class BM25Tests(unittest.TestCase):
@@ -80,6 +105,25 @@ class VectorStoreTests(unittest.IsolatedAsyncioTestCase):
             ["judul", "cakupan"],
         )
         self.assertNotEqual(title_only, title_and_scope)
+
+
+class SemanticRerankerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reasoning_model_uses_high_effort_without_temperature(self):
+        client = FakeRerankClient()
+        reranker = SemanticReranker(client)
+        results, used = await reranker.rerank(
+            "penjual es teler",
+            [{
+                "kode_kbli": "56306",
+                "judul": "Aktivitas Penyediaan Minuman Keliling",
+                "cakupan": "Minuman es siap dikonsumsi.",
+            }],
+            top_k=1,
+        )
+        self.assertTrue(used)
+        self.assertEqual(results[0]["kode_kbli"], "56306")
+        self.assertEqual(client.completions.last_kwargs["reasoning_effort"], "high")
+        self.assertNotIn("temperature", client.completions.last_kwargs)
 
 
 class HybridCacheTests(unittest.IsolatedAsyncioTestCase):

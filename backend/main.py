@@ -54,6 +54,7 @@ OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "30"))
 CLASSIFICATION_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-terra")
 KBJI_RERANK_MODEL = os.getenv("KBJI_RERANK_MODEL", CLASSIFICATION_MODEL)
 QUERY_UNDERSTANDING_MODEL = os.getenv("QUERY_UNDERSTANDING_MODEL", CLASSIFICATION_MODEL)
+OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "high")
 FEEDBACK_DB_PATH = Path(
     os.getenv(
         "FEEDBACK_DB_PATH",
@@ -410,6 +411,17 @@ LOCAL_QUERY_EXPANSIONS = [
     (("pangkas rambut", "potong rambut", "barbershop", "salon"), ["96210", "pangkas rambut", "penataan rambut"]),
     (("jualan pulsa", "konter pulsa", "pulsa"), ["61105", "jasa sistem komunikasi", "telekomunikasi"]),
     (("warung kelontong", "toko kelontong", "warung madura"), ["47111", "perdagangan eceran", "berbagai macam barang", "kelontong"]),
+    (
+        (
+            "es teler", "es doger", "es cincau", "es buah", "jus buah",
+            "jualan minuman", "penjual minuman", "minuman racikan",
+        ),
+        [
+            "56306", "56304", "56303", "penyediaan minuman",
+            "minuman siap dikonsumsi", "proses pembuatan", "kedai minuman",
+            "keliling", "tempat tidak tetap",
+        ],
+    ),
 ]
 
 KBJI_SCHOOL_DATA_TRIGGERS = (
@@ -796,6 +808,48 @@ def build_local_reasoning(query: str, result: dict, matched_keywords: list[str] 
     scope = result.get("cakupan", "")
     code = result.get("code") or result.get("kode") or result.get("kode_kbli", "")
 
+    query_lower = str(query).lower()
+    fresh_drink_terms = (
+        "es teler", "es doger", "es cincau", "es buah", "jus buah",
+        "jualan minuman", "penjual minuman", "minuman racikan",
+    )
+    is_fresh_drink = (
+        any(term in query_lower for term in fresh_drink_terms)
+        or "minuman siap dikonsumsi" in query_lower
+        or ("teler" in query_lower and "minuman" in query_lower)
+    )
+    if is_fresh_drink:
+        contextual_reasons = {
+            "56306": (
+                "Input menunjukkan minuman yang diracik atau dibuat untuk langsung dikonsumsi, "
+                "bukan sekadar penjualan kembali minuman kemasan. KBLI 56306 paling dekat bila "
+                "penjualannya keliling atau memakai tempat tidak tetap; cakupannya juga memberi "
+                "contoh minuman es sejenis seperti es doger dan es cincau. Jika usaha menetap di "
+                "bangunan permanen, 56303 lebih tepat; jika berupa kedai/tenda bongkar-pasang, "
+                "pertimbangkan 56304."
+            ),
+            "56304": (
+                "Input menunjukkan penyajian minuman racikan siap konsumsi. KBLI 56304 sesuai "
+                "apabila usaha dijalankan sebagai kedai atau tenda bongkar-pasang, seperti kedai "
+                "jus. Bila berjualan keliling/tempat tidak tetap gunakan 56306, sedangkan bangunan "
+                "permanen lebih dekat ke 56303."
+            ),
+            "56303": (
+                "Input menunjukkan penyediaan minuman siap konsumsi. KBLI 56303 sesuai apabila "
+                "es teler disajikan dari rumah minum atau kafe di bangunan permanen. Bila model "
+                "usahanya kedai/tenda atau berkeliling, 56304 atau 56306 lebih tepat."
+            ),
+            "47222": (
+                "KBLI 47222 hanya tepat bila kegiatan utamanya menjual kembali minuman "
+                "nonalkohol dan tidak untuk langsung dikonsumsi di tempat. Karena es teler "
+                "umumnya diracik untuk langsung diminum, kode penyediaan minuman 56303-56306 "
+                "biasanya lebih kuat kecuali pengguna menjelaskan bahwa produknya hanya dijual "
+                "dalam kemasan."
+            ),
+        }
+        if code in contextual_reasons:
+            return f"Diklasifikasikan ke {code} - {title}. {contextual_reasons[code]}"
+
     searchable_title = title.lower()
     searchable_hierarchy = hierarchy.lower()
     searchable_scope = scope.lower()
@@ -1071,8 +1125,8 @@ Output: 494, angkutan jalan, pindahan
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Input: \"{query}\""}
             ],
-            max_tokens=60,
-            temperature=0  # Zero for strict instruction following
+            max_completion_tokens=600,
+            reasoning_effort=OPENAI_REASONING_EFFORT,
         )
         
         expanded = response.choices[0].message.content.strip()
@@ -1274,7 +1328,8 @@ ATURAN PENTING:
 3. Satpol PP/Polisi Pamong Praja BUKAN POLRI/TNI. Jangan memilih Bintara POLRI, Perwira POLRI, atau jabatan TNI kecuali query eksplisit menyebut POLRI/TNI.
 4. Pada frasa seperti "operator sekolah", kata "operator" adalah tugas dan "sekolah" adalah konteks tempat kerja. Utamakan entri/input data atau administrasi, bukan kepala, pengawas, atau guru sekolah.
 5. Kandidat yang hanya cocok pada konteks tempat kerja tetapi tidak cocok pada tugas harus dibuang.
-6. Berikan skor (0.0 - 1.0) dan alasan singkat. Hanya sertakan kandidat relevan (relevance > 0.3).
+6. Berikan skor (0.0 - 1.0). Hanya sertakan kandidat relevan (relevance > 0.3).
+7. Alasan harus 2-4 kalimat: jelaskan tugas utama, kecocokan dengan deskripsi KBJI, pembeda dari kandidat terdekat, dan konteks yang masih perlu dikonfirmasi. Jangan hanya menyebut kemiripan kata.
 
 OUTPUT FORMAT (JSON only, no markdown):
 {
@@ -1283,7 +1338,7 @@ OUTPUT FORMAT (JSON only, no markdown):
       "rank": 1,
       "index": <nomor kandidat 1-based>,
       "relevance": <0.0-1.0>,
-      "reason": "<alasan>"
+      "reason": "<alasan substantif 2-4 kalimat>"
     }
   ]
 }"""
@@ -1301,8 +1356,8 @@ OUTPUT FORMAT (JSON only, no markdown):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0,
-            max_completion_tokens=1000,
+            reasoning_effort=OPENAI_REASONING_EFFORT,
+            max_completion_tokens=1800,
             response_format={"type": "json_object"},
         )
         content = (response.choices[0].message.content or "").strip()
@@ -1545,6 +1600,21 @@ async def hybrid_search(
             q,
             understanding,
         )
+
+        # Hybrid retrieval previously skipped the deterministic informal-term
+        # expansions used by smart search. Numeric hints stay in keyword search;
+        # descriptive terms enrich both sparse and semantic retrieval here.
+        local_terms = [
+            term for term in expand_local_keywords(q)
+            if term and not str(term).isdigit()
+        ]
+        if local_terms:
+            local_context = " ".join(dict.fromkeys(local_terms))
+            retrieval_query = f"{retrieval_query} {local_context}".strip()
+            semantic_query = f"{semantic_query}\n{local_context}".strip()
+            rerank_context = (
+                f"{rerank_context}. Istilah KBLI lokal terkait: {local_context}"
+            )
 
         # Perform hybrid search
         result = await hybrid_search_engine.search(
