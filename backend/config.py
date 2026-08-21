@@ -9,8 +9,8 @@ load_dotenv()
 # OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 EMBEDDING_MODEL = "text-embedding-3-small"
-CLASSIFIER_MODEL = "gpt-4o-mini"  # Use mini for cost efficiency
-INTENT_SPLITTER_MODEL = "gpt-4o-mini"
+CLASSIFIER_MODEL = "gpt-5.6-terra"  # Use mini for cost efficiency
+INTENT_SPLITTER_MODEL = "gpt-5.6-terra"
 
 # Supabase
 SUPABASE_URL = os.getenv("SUPABASE_URL")

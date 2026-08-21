@@ -51,7 +51,7 @@ except ImportError:
 # Load environment variables
 load_dotenv()
 OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "30"))
-CLASSIFICATION_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini-2026-03-17")
+CLASSIFICATION_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-terra")
 KBJI_RERANK_MODEL = os.getenv("KBJI_RERANK_MODEL", CLASSIFICATION_MODEL)
 QUERY_UNDERSTANDING_MODEL = os.getenv("QUERY_UNDERSTANDING_MODEL", CLASSIFICATION_MODEL)
 FEEDBACK_DB_PATH = Path(
@@ -1066,7 +1066,7 @@ Output: 494, angkutan jalan, pindahan
 
     try:
         response = await async_openai_client.chat.completions.create(
-            model="gpt-5.4-mini-2026-03-17",
+            model="gpt-5.6-terra",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Input: \"{query}\""}

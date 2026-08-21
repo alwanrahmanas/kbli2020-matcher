@@ -434,7 +434,7 @@ class SemanticReranker:
         self.model = (
             os.getenv("KBLI_RERANK_MODEL")
             or os.getenv("OPENAI_MODEL")
-            or "gpt-5.4-mini-2026-03-17"
+            or "gpt-5.6-terra"
         )
     
     async def rerank(

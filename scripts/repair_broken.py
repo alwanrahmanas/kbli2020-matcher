@@ -8,7 +8,7 @@ load_dotenv(Path("backend") / ".env")
 load_dotenv(Path(__file__).parent.parent / "backend" / ".env")  # fallback
 key = os.getenv("OPENAI_API_KEY")
 client = AsyncOpenAI(api_key=key)
-LLM_MODEL = "gpt-5.4-mini-2026-03-17"
+LLM_MODEL = "gpt-5.6-terra"
 
 with open(Path(__file__).parent.parent / "kbli_parsed_fast.json", encoding="utf-8") as f:
     data = json.load(f)

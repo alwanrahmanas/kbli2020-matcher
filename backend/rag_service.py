@@ -31,7 +31,7 @@ Deskripsi: "{text}"
 Contoh output: ["Jual pulsa", "Jual nasi goreng"]"""
 
         response = await self.client.chat.completions.create(
-            model="gpt-5.4-mini-2026-03-17",
+            model="gpt-5.6-terra",
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
             max_tokens=200
@@ -134,7 +134,7 @@ Konteks KBLI yang tersedia:
 Klasifikasikan deskripsi di atas. Output JSON saja."""
 
         response = await self.client.chat.completions.create(
-            model="gpt-5.4-mini-2026-03-17",
+            model="gpt-5.6-terra",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
